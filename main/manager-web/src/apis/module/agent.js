@@ -128,6 +128,63 @@ export default {
                 });
             }).send();
     },
+    getCompanionSummary(agentId, callback, onTerminalFailure) {
+        const request = RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/summary`)
+            .method('GET')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).networkFail((error) => terminateCallbackRequest(onTerminalFailure, error));
+        attachTerminalFailure(request, onTerminalFailure).send();
+    },
+    resetCompanionState(agentId, callback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/state?confirmAgentId=${encodeURIComponent(agentId)}`)
+            .method('DELETE')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).send();
+    },
+    clearLegacyMemory(agentId, callback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/legacy-memory?confirmAgentId=${encodeURIComponent(agentId)}`)
+            .method('DELETE')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).send();
+    },
+    getCompanionMemories(agentId, callback, onTerminalFailure) {
+        const request = RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/memories?limit=200`)
+            .method('GET')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).networkFail((error) => terminateCallbackRequest(onTerminalFailure, error));
+        attachTerminalFailure(request, onTerminalFailure).send();
+    },
+    updateCompanionMemory(agentId, memoryId, payload, callback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/memories/${memoryId}`)
+            .method('PUT')
+            .data(payload)
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).send();
+    },
+    deleteCompanionMemory(agentId, memoryId, callback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/memories/${memoryId}`)
+            .method('DELETE')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).send();
+    },
     // 获取智能体配置快照列表
     getAgentSnapshots(agentId, params, callback, onTerminalFailure, retryCount = 0, retryStartedAt = 0) {
         const retryWindowStartedAt = retryStartedAt || Date.now()

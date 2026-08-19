@@ -50,6 +50,7 @@ services:
       - SPRING_DATA_REDIS_HOST=xiaozhi-esp32-server-redis
       - SPRING_DATA_REDIS_PASSWORD=
       - SPRING_DATA_REDIS_PORT=6379
+      - COMPANION_COMPILER_URL=http://xiaozhi-esp32-server:8003
     volumes:
       # 配置文件目录
       - ./uploadfile:/uploadfile

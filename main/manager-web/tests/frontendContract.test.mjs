@@ -14,6 +14,18 @@ const functionDialogSource = await readFile(
   new URL('../src/components/FunctionDialog.vue', import.meta.url),
   'utf8',
 );
+const personaLibrarySource = await readFile(
+  new URL('../src/views/PersonaLibrary.vue', import.meta.url),
+  'utf8',
+);
+const roleConfigSource = await readFile(
+  new URL('../src/views/roleConfig.vue', import.meta.url),
+  'utf8',
+);
+const agentApiSource = await readFile(
+  new URL('../src/apis/module/agent.js', import.meta.url),
+  'utf8',
+);
 
 test('address-book permission state consistently uses the target device MAC', () => {
   assert.match(
@@ -77,4 +89,31 @@ test('function dialog footer stays above the expanding MCP tools section', () =>
   assert.ok(mcpLayer, 'MCP section should define its stacking layer');
   assert.ok(footerLayer, 'drawer footer should define its stacking layer');
   assert.ok(Number(footerLayer[1]) > Number(mcpLayer[1]));
+});
+
+test('persona library only resumes active imports and uses a compact card banner', () => {
+  assert.match(
+    personaLibrarySource,
+    /if \(activeJobId\) this\.resumeJob\(activeJobId\)/,
+  );
+  assert.match(
+    personaLibrarySource,
+    /TERMINAL_IMPORT_STATUSES\.includes\(job\.status\)[\s\S]*removeItem\('personaImportJobId'\)/,
+  );
+  assert.match(
+    personaLibrarySource,
+    /\.card-visual\s*\{[^}]*height:\s*60px;[^}]*flex:\s*0 0 60px;/s,
+  );
+});
+
+test('companion role configuration preserves scoped state and legacy data', () => {
+  assert.match(roleConfigSource, /\["vadModelId", "asrModelId", "llmModelId", "slmModelId", "vllmModelId", "intentModelId"\]/);
+  assert.doesNotMatch(roleConfigSource, /slmModelId:\s*templateData\.llmModelId/);
+  assert.match(roleConfigSource, /if \(value !== null && value !== undefined\) target\[key\] = value/);
+  assert.match(roleConfigSource, /assign\(next, "chatHistoryConf", templateData\.chatHistoryConf\)/);
+  assert.match(roleConfigSource, /form\.model\.memModelId === 'Memory_mem_local_short'/);
+  assert.match(roleConfigSource, /Changing provider controls future behavior only/);
+  assert.match(roleConfigSource, /templateScopes:\s*\["base"\]/);
+  assert.match(agentApiSource, /\/legacy-memory\?confirmAgentId=/);
+  assert.match(agentApiSource, /\/companion\/memories\/\$\{memoryId\}/);
 });

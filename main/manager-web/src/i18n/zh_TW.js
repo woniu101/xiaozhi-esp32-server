@@ -1,4 +1,7 @@
+import zhCN from './zh_CN'
+
 export default {
+  ...zhCN,
   // 登錄頁面相關提示文本
   'login.requiredUsername': '用戶名不能為空',
   'login.requiredPassword': '密碼不能為空',
@@ -834,10 +837,10 @@ export default {
   'roleConfig.snapshotHistory': '歷史版本',
   'roleConfig.currentVersion': '目前版本 {version}',
   'roleConfig.functionName': '功能名稱',
-  'roleConfig.reset': '重置',
+  'roleConfig.reset': '放棄未儲存修改',
   'roleConfig.agentName': '助手暱稱',
   'roleConfig.roleTemplate': '角色模版',
-  'roleConfig.roleIntroduction': '角色介紹',
+  'roleConfig.roleIntroduction': '基礎系統規則',
   'roleConfig.languageCode': '語言編碼',
   'roleConfig.interactionLanguage': '交互語種',
   'agentSnapshot.title': '歷史版本',
@@ -960,8 +963,8 @@ export default {
   'roleConfig.slm': '小參數模型(SLM)',
   'roleConfig.vllm': '視覺大模型(VLLM)',
   'roleConfig.tts': '語音合成(TTS)',
-  'roleConfig.memoryHis': '記憶',
-  'roleConfig.memory': '記憶模式(Men)',
+  'roleConfig.memoryHis': '本機短記憶摘要',
+  'roleConfig.memory': '舊版對話記憶',
   'roleConfig.intent': '意圖識別(Intent)',
   'roleConfig.language': '選擇語言(Lang)',
   'roleConfig.selectLanguage': '請選擇語言',

@@ -25,6 +25,12 @@
           }" />
           <span class="nav-text">{{ $t("header.smartManagement") }}</span>
         </div>
+        <div class="equipment-management"
+          :class="{ 'active-tab': $route.path === '/persona-library' }"
+          @click="handleRouter('personaLibrary')">
+          <i class="el-icon-user-solid persona-nav-icon"></i>
+          <span class="nav-text">{{ $t("header.personaLibrary") }}</span>
+        </div>
         <!-- 普通用户显示音色克隆 -->
         <div v-if="!userInfo.superAdmin && featureStatus.voiceClone" class="equipment-management"
           :class="{ 'active-tab': $route.path === '/voice-clone-management' }"
@@ -206,6 +212,7 @@ export default {
       // 跳转页面配置
       routerPaths: {
         home: "/home",
+        personaLibrary: "/persona-library",
         modelConfig: "/model-config",
         knowledgeBaseManagement: "/knowledge-base-management",
         addressBookManagement: "/address-book-management",
@@ -582,6 +589,10 @@ export default {
 .equipment-management img {
   width: 15px;
   height: 13px;
+}
+
+.persona-nav-icon {
+  font-size: 15px;
 }
 
 .avatar-img {

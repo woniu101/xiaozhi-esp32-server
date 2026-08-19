@@ -1,8 +1,9 @@
 # 第一阶段：构建Vue前端
 FROM node:18 AS web-builder
+ARG GIT_COMMIT=dev
 WORKDIR /app
 COPY main/manager-web/package*.json ./
-RUN npm install
+RUN npm ci
 COPY main/manager-web .
 RUN npm run build
 
@@ -15,6 +16,10 @@ RUN mvn clean package -Dmaven.test.skip=true
 
 # 第三阶段：构建最终镜像
 FROM bellsoft/liberica-runtime-container:jre-21-glibc
+
+ARG GIT_COMMIT=dev
+LABEL org.opencontainers.image.revision=$GIT_COMMIT
+ENV XIAOZHI_GIT_COMMIT=$GIT_COMMIT
 
 # 安装Nginx和字体库
 RUN apk update && \
@@ -43,6 +48,9 @@ COPY --from=api-builder /app/target/xiaozhi-esp32-api.jar /app/xiaozhi-esp32-api
 
 # 暴露端口
 EXPOSE 8002
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8002' || exit 1
 
 # 启动脚本
 COPY docs/docker/start.sh /start.sh

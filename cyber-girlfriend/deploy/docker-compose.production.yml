@@ -1,0 +1,83 @@
+name: xiaozhi-cyber-companion
+
+services:
+  mysql:
+    image: mysql:8.4.3
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: xiaozhi_esp32_server
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:8.0.3-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  manager:
+    image: ${IMAGE_PREFIX:-xiaozhi-cyber-companion}/manager:${GIT_COMMIT:-dev}
+    build:
+      context: ../..
+      dockerfile: Dockerfile-web
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${MANAGER_PORT:-8002}:8002"
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_DRUID_URL: jdbc:mysql://mysql:3306/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true
+      SPRING_DATASOURCE_DRUID_USERNAME: root
+      SPRING_DATASOURCE_DRUID_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      COMPANION_COMPILER_URL: http://server:8003
+      COMPANION_ARTIFACT_DIR: /uploadfile/personas
+    volumes:
+      - persona-artifacts:/uploadfile/personas
+
+  server:
+    image: ${IMAGE_PREFIX:-xiaozhi-cyber-companion}/server:${GIT_COMMIT:-dev}
+    build:
+      context: ../..
+      dockerfile: Dockerfile-server
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-dev}
+    restart: unless-stopped
+    depends_on:
+      manager:
+        condition: service_healthy
+    ports:
+      - "${WEBSOCKET_PORT:-8000}:8000"
+      - "${COMPILER_PORT:-8003}:8003"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./runtime/server:/opt/xiaozhi-esp32-server/data
+      - ../../main/xiaozhi-server/models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt:ro
+
+volumes:
+  mysql-data:
+  redis-data:
+  persona-artifacts:

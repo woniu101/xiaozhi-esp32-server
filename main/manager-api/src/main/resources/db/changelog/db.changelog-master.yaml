@@ -739,3 +739,47 @@ databaseChangeLog:
         - sqlFile:
             encoding: utf8
             path: classpath:db/changelog/202608131030.sql
+  - changeSet:
+      id: 202608181200
+      author: codex
+      validCheckSum:
+        - 8:c3180f28ca679bed941ff642fc21a38e
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202608181200.sql
+  - changeSet:
+      id: 202608191200
+      author: codex
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202608191200.sql
+  - changeSet:
+      id: 202608201200
+      author: codex
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202608201200.sql
+  - changeSet:
+      id: 202608211200
+      author: codex
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202608211200.sql
+  - changeSet:
+      id: 202608221200
+      author: codex
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202608221200.sql
+  - changeSet:
+      id: 202608231200
+      author: codex
+      changes:
+        - sqlFile:
+            encoding: utf8
+            path: classpath:db/changelog/202608231200.sql

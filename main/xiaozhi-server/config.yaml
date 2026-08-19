@@ -218,6 +218,37 @@ prompt: |
 # 默认系统提示词模板文件
 prompt_template: agent-base-prompt.txt
 
+# Companion Core 默认关闭。启用前先使用 dot-skill 导入器发布一个 Persona。
+companion:
+  enabled: false
+  # rules=纯规则低延迟；hybrid/llm=规则 + 主模型严格 JSON 结构化抽取。
+  memory_extraction_mode: rules
+  # 全模块人物库使用的安全编译接口；接口始终需要 manager-api.secret 的 HMAC 签名。
+  persona_admin_enabled: true
+  artifact_max_upload_mb: 10
+  persona_cache_ttl_seconds: 600
+  persona_latest_ttl_seconds: 60
+  persona_id: ""
+  persona_version: null
+  # 简化部署下可显式指定；全模块部署由 manager-api 下发真实 user/agent 标识。
+  user_id: ""
+  agent_id: ""
+  persona_registry: data/companion/personas
+  database_path: data/companion/companion.db
+  # auto: manager-api 模式使用 MySQL，单体模式使用 SQLite。
+  repository: auto
+  # 可独立回退为 filesystem；不会改变 State/Memory 的 manager-api 真源。
+  persona_registry_backend: auto
+  # Companion 初始化超时后立即回退基础聊天，避免 manager-api 故障阻塞设备上线。
+  init_timeout_ms: 1500
+  context_timeout_ms: 500
+  persona_judge:
+    enabled: false
+    base_url: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 12
+
 # 系统错误时的回复
 system_error_response: "主人，小智现在有点忙，我们稍后再试吧。"
 

@@ -19,6 +19,17 @@ const routes = [
     }
   },
   {
+    path: '/persona-library',
+    name: 'PersonaLibrary',
+    component: function () {
+      return import('../views/PersonaLibrary.vue')
+    },
+    meta: {
+      requiresAuth: true,
+      title: '人物库'
+    }
+  },
+  {
     path: '/voice-print',
     name: 'VoicePrint',
     component: function () {
@@ -229,7 +240,7 @@ VueRouter.prototype.push = function push(location) {
 }
 
 // 需要登录才能访问的路由
-const protectedRoutes = ['home', 'RoleConfig', 'DeviceManagement', 'UserManagement', 'ModelConfig', 'KnowledgeBaseManagement', 'KnowledgeFileUpload', 'AddressBookManagement']
+const protectedRoutes = ['home', 'RoleConfig', 'PersonaLibrary', 'DeviceManagement', 'UserManagement', 'ModelConfig', 'KnowledgeBaseManagement', 'KnowledgeFileUpload', 'AddressBookManagement']
 
 // 路由守卫
 router.beforeEach((to, from, next) => {

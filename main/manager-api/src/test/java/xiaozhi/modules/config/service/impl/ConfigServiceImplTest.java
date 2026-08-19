@@ -18,6 +18,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.modules.agent.dao.AgentVoicePrintDao;
+import xiaozhi.modules.agent.entity.AgentEntity;
 import xiaozhi.modules.agent.service.AgentContextProviderService;
 import xiaozhi.modules.agent.service.AgentMcpAccessPointService;
 import xiaozhi.modules.agent.service.AgentPluginMappingService;
@@ -67,6 +68,28 @@ class ConfigServiceImplTest {
         Map<?, ?> features = assertInstanceOf(Map.class, server.get("features"));
         assertEquals(true, features.get("enabled"));
         assertEquals(List.of("first", "second"), features.get("labels"));
+    }
+
+    @Test
+    void companionConfigUsesStableOwnerAndAgentIdentity() {
+        ConfigServiceImpl service = newService(mock(SysParamsService.class), mock(RedisUtils.class));
+        AgentEntity agent = new AgentEntity();
+        agent.setId("agent-1");
+        agent.setUserId(42L);
+        agent.setCompanionEnabled(true);
+        agent.setPersonaId("persona.relationship.rabbit");
+        agent.setPersonaVersion("v2");
+        agent.setCompanionOverlay("{\"user_address\":\"阿明\"}");
+        Map<String, Object> result = new HashMap<>();
+
+        ReflectionTestUtils.invokeMethod(service, "buildCompanionConfig", agent, result);
+
+        Map<?, ?> companion = assertInstanceOf(Map.class, result.get("companion"));
+        assertEquals(true, companion.get("enabled"));
+        assertEquals("42", companion.get("owner_user_id"));
+        assertEquals("agent-1", companion.get("agent_id"));
+        assertEquals("persona.relationship.rabbit", companion.get("persona_id"));
+        assertEquals("阿明", assertInstanceOf(Map.class, companion.get("overlay")).get("user_address"));
     }
 
     private static SysParamsDTO parameter(String code, String value, String type) {

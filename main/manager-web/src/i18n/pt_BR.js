@@ -1,4 +1,7 @@
+import en from './en'
+
 export default {
+  ...en,
   // Texto da página de login
   'login.requiredUsername': 'O nome de usuário não pode estar vazio',
   'login.requiredPassword': 'A senha não pode estar vazia',
@@ -834,10 +837,10 @@ export default {
   'roleConfig.snapshotHistory': 'Histórico de Versões',
   'roleConfig.currentVersion': 'Versão Atual {version}',
   'roleConfig.functionName': 'Nome da Função',
-  'roleConfig.reset': 'Redefinir',
+  'roleConfig.reset': 'Descartar alterações não salvas',
   'roleConfig.agentName': 'Apelido',
   'roleConfig.roleTemplate': 'Modelo',
-  'roleConfig.roleIntroduction': 'Introdução',
+  'roleConfig.roleIntroduction': 'Regras básicas do sistema',
   'roleConfig.languageCode': 'Código do Idioma',
   'roleConfig.interactionLanguage': 'Idioma de Interação',
   'agentSnapshot.title': 'Histórico de Versões',
@@ -960,8 +963,8 @@ export default {
   'roleConfig.slm': 'Modelo de Linguagem Pequeno',
   'roleConfig.vllm': 'Modelo de Visão',
   'roleConfig.intent': 'Reconhecimento de Intenção',
-  'roleConfig.memoryHis': 'Memória',
-  'roleConfig.memory': 'Modelo de Memória',
+  'roleConfig.memoryHis': 'Resumo local de memória curta',
+  'roleConfig.memory': 'Memória de conversa legada',
   'roleConfig.tts': 'Texto para Fala',
   'roleConfig.language': 'Linguagem do diálogo',
   'roleConfig.selectLanguage': 'Por favor, selecione o idioma',

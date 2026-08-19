@@ -475,7 +475,6 @@ export default {
                 this.$message.warning(this.$t('voiceClone.pleaseSelectAudio'));
                 return;
             }
-
             // 验证音频时长（8-60秒）
             if (this.audioBuffer) {
                 const duration = this.audioBuffer.duration;
@@ -491,7 +490,6 @@ export default {
                 const formData = new FormData();
                 formData.append('voiceFile', this.audioFile);
                 formData.append('id', this.voiceCloneData.id);
-
                 await Api.voiceClone.uploadVoice(formData, (res) => {
                     this.uploading = false;
                     res = res.data;

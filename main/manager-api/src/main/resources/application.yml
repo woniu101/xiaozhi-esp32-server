@@ -64,3 +64,8 @@ mybatis-plus:
     prefix:
     blobType: BLOB
     boolValue: TRUE
+
+companion:
+  # 本地源码开发默认连接同机 xiaozhi-server；Docker Compose 必须通过环境变量覆盖为服务名。
+  compiler-url: ${COMPANION_COMPILER_URL:http://127.0.0.1:8003}
+  artifact-dir: ${COMPANION_ARTIFACT_DIR:/uploadfile/personas}

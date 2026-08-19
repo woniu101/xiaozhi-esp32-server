@@ -22,6 +22,17 @@ logger = setup_logging()
 class TTSProvider(TTSProviderBase):
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
+        self.emotion_style_map = {
+            "neutral": "neutral",
+            "warm": "happy",
+            "happy": "happy",
+            "excited": "happy",
+            "concerned": "sad",
+            "soft": "neutral",
+            "apologetic": "sad",
+            "restrained": "neutral",
+            **self.emotion_style_map,
+        }
         self.group_id = config.get("group_id")
         self.api_key = config.get("api_key")
         self.model = config.get("model")
@@ -175,11 +186,13 @@ class TTSProvider(TTSProviderBase):
 
     async def text_to_speak(self, text, is_last):
         """流式处理TTS音频，每句只推送一次音频列表"""
+        voice_setting = dict(self.voice_setting)
+        voice_setting["emotion"] = self.provider_emotion_style() or "neutral"
         payload = {
             "model": self.model,
             "text": text,
             "stream": True,
-            "voice_setting": self.voice_setting,
+            "voice_setting": voice_setting,
             "pronunciation_dict": self.pronunciation_dict,
             "audio_setting": self.audio_setting,
         }
@@ -304,11 +317,13 @@ class TTSProvider(TTSProviderBase):
         if self._correct_words_pattern:
             text = self._correct_words_pattern.sub(lambda m: self.correct_words[m.group(0)], text)
 
+        voice_setting = dict(self.voice_setting)
+        voice_setting["emotion"] = self.provider_emotion_style() or "neutral"
         payload = {
             "model": self.model,
             "text": text,
             "stream": True,
-            "voice_setting": self.voice_setting,
+            "voice_setting": voice_setting,
             "pronunciation_dict": self.pronunciation_dict,
             "audio_setting": self.audio_setting,
         }

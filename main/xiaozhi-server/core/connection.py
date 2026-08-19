@@ -45,6 +45,18 @@ from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils import textUtils
+from core.companion.runtime import get_companion_manager
+from core.companion.state_models import CompanionIdentity
+from core.companion.turn_recorder import TurnRecorder
+from core.companion.privacy import sanitize_tool_output
+from core.companion.presentation import (
+    apply_success_acknowledgement,
+    resolve_presentation,
+    send_presentation,
+)
+from core.companion.observability import metrics
+from core.companion.event_extractor import RuleBasedEventExtractor, LLMStructuredMemoryExtractor
+from core.companion.proactive import proactive_due
 
 
 TAG = __name__
@@ -199,6 +211,16 @@ class ConnectionHandler:
         self.calling = False
         # 标记当前是否为来电接听模式
         self.incoming_call = None
+
+        # Companion Core 默认关闭，初始化失败时保持现有聊天链路可用。
+        self.companion_manager = None
+        self.companion_session = None
+        self.active_turn_recorder = None
+        self.companion_proactive_task = None
+        self.last_companion_proactive_time = 0.0
+        # Heartbeats and audio transport refresh last_activity_time, so proactive
+        # check-ins need an independent timestamp for actual user turns.
+        self.last_companion_user_turn_time = time.time()
 
     async def handle_connection(self, ws: websockets.ServerConnection):
         try:
@@ -649,6 +671,8 @@ class ConnectionHandler:
             self._init_prompt_enhancement()
             """注入工具调用few-shot示例（仅function_call模式）"""
             self._inject_tool_call_fewshot()
+            self._configure_companion_memory_extractor()
+            self._start_companion_proactive_scheduler()
 
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"实例化组件失败: {e}")
@@ -657,11 +681,20 @@ class ConnectionHandler:
 
         # 更新上下文信息
         self.prompt_manager.update_context_info(self, self.client_ip)
+        companion_enabled = self.companion_session is not None
+        base_rules = self.config["prompt"]
+        if companion_enabled:
+            base_rules = (
+                "你负责稳定、安全地完成语音对话和工具调用。人物身份、语气、关系边界、"
+                "记忆与情绪表达均以每轮注入的 Companion Persona 上下文为准；不要用通用助手"
+                "人设覆盖人物设定，也不要虚构未记录的共同经历。"
+            )
         enhanced_prompt = self.prompt_manager.build_enhanced_prompt(
-            self.config["prompt"],
+            base_rules,
             self.device_id,
             self.client_ip,
             emoji_enabled=(self.features or {}).get("emoji", True),
+            companion_enabled=companion_enabled,
         )
         if enhanced_prompt:
             self.change_system_prompt(enhanced_prompt)
@@ -789,6 +822,7 @@ class ConnectionHandler:
         try:
             # 异步获取差异化配置
             await self._initialize_private_config_async()
+            await self._initialize_companion()
             # 在线程池中初始化组件
             self.executor.submit(self._initialize_components)
         except Exception as e:
@@ -915,6 +949,10 @@ class ConnectionHandler:
             self.config["mcp_endpoint"] = private_config["mcp_endpoint"]
         if private_config.get("context_providers", None) is not None:
             self.config["context_providers"] = private_config["context_providers"]
+        if private_config.get("companion", None) is not None:
+            companion_config = dict(self.config.get("companion", {}))
+            companion_config.update(private_config["companion"])
+            self.config["companion"] = companion_config
 
         # 注入替换词到 TTS 模块配置
         if private_config.get("correct_words", None) is not None:
@@ -952,6 +990,177 @@ class ConnectionHandler:
             self.intent = modules["intent"]
         if modules.get("memory", None) is not None:
             self.memory = modules["memory"]
+
+    async def _initialize_companion(self):
+        companion_config = self.config.get("companion", {})
+        if not companion_config.get("enabled", False):
+            return
+        persona_id = str(companion_config.get("persona_id") or "").strip()
+        if not persona_id:
+            self.logger.bind(tag=TAG).warning("Companion 已启用但未配置 persona_id，继续使用基础聊天")
+            return
+        user_id = str(
+            companion_config.get("owner_user_id")
+            or companion_config.get("user_id")
+            or self.device_id
+            or ""
+        ).strip()
+        agent_id = str(companion_config.get("agent_id") or self.device_id or "").strip()
+        if not user_id or not agent_id:
+            self.logger.bind(tag=TAG).warning("Companion 缺少稳定 user_id/agent_id，继续使用基础聊天")
+            return
+        try:
+            self.companion_manager = get_companion_manager(self.config)
+            init_timeout_ms = int(companion_config.get("init_timeout_ms", 1500))
+            self.companion_session = await asyncio.wait_for(
+                self.companion_manager.open_session(
+                    CompanionIdentity(
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        persona_id=persona_id,
+                        persona_version=companion_config.get("persona_version"),
+                    ),
+                    self.session_id,
+                    overlay=companion_config.get("overlay"),
+                ),
+                timeout=max(0.1, init_timeout_ms / 1000),
+            )
+            self.logger.bind(tag=TAG).info(
+                f"Companion 初始化成功: persona={persona_id}, version={self.companion_session.identity.persona_version}"
+            )
+        except Exception as e:
+            self.companion_manager = None
+            self.companion_session = None
+            self.logger.bind(tag=TAG).error(f"Companion 初始化失败，已回退基础聊天: {e}")
+
+    def _build_companion_context(self, query):
+        if not query or self.companion_manager is None or self.companion_session is None:
+            return None
+        try:
+            timeout_ms = int(self.config.get("companion", {}).get("context_timeout_ms", 500))
+            future = asyncio.run_coroutine_threadsafe(
+                self.companion_manager.before_turn(self.companion_session, query),
+                self.loop,
+            )
+            return future.result(timeout=max(0.05, timeout_ms / 1000))
+        except Exception as e:
+            if isinstance(e, TimeoutError):
+                metrics.increment("companion_context_timeout_total")
+            self.logger.bind(tag=TAG).warning(f"Companion 上下文构建失败，使用基础上下文: {e}")
+            return None
+
+    def _finalize_companion_turn(self, recorder):
+        if recorder is None:
+            return
+        completed = recorder.finalize()
+        if self.active_turn_recorder is recorder:
+            self.active_turn_recorder = None
+        if self.companion_manager is None or self.companion_session is None:
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self.companion_manager.after_turn(self.companion_session, completed),
+                self.loop,
+            )
+
+            def log_failure(done):
+                try:
+                    done.result()
+                except Exception as error:
+                    self.logger.bind(tag=TAG).error(f"Companion Turn 后处理失败: {error}")
+
+            future.add_done_callback(log_failure)
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"Companion Turn 提交失败: {e}")
+
+    def _personalize_immediate_tool_response(self, text, action=None):
+        sanitized = sanitize_tool_output(text)
+        # A friendly acknowledgement is appropriate only after a successful
+        # operation. Prefixing failures ("行吧，工具调用失败") sounds misleading.
+        if self.companion_session is None:
+            return sanitized
+        prefix = str(self.companion_session.overlay.get("tool_ack_prefix") or "").strip()
+        return apply_success_acknowledgement(sanitized, prefix, action == Action.RESPONSE)
+
+    def _start_companion_proactive_scheduler(self):
+        if self.companion_session is None or self.loop is None:
+            return
+        overlay = self.companion_session.overlay
+        if not overlay.get("proactive_enabled", False):
+            return
+        if self.companion_proactive_task is None:
+            self.companion_proactive_task = asyncio.run_coroutine_threadsafe(
+                self._companion_proactive_loop(), self.loop
+            )
+
+    def _configure_companion_memory_extractor(self):
+        if self.companion_session is None:
+            return
+        mode = str(self.config.get("companion", {}).get("memory_extraction_mode") or "rules").lower()
+        if mode in {"llm", "hybrid"} and self.llm is not None:
+            self.companion_session.memory_extractor = RuleBasedEventExtractor(
+                LLMStructuredMemoryExtractor(self.llm)
+            )
+
+    async def _companion_proactive_loop(self):
+        """Emit a real, independently scheduled check-in while a device stays online."""
+        while not self.stop_event.is_set() and self.companion_session is not None:
+            await asyncio.sleep(30)
+            overlay = self.companion_session.overlay
+            if not overlay.get("proactive_enabled", False):
+                return
+            now = time.time()
+            if not proactive_due(
+                now,
+                self.last_companion_user_turn_time,
+                self.last_companion_proactive_time,
+                int(overlay.get("proactive_interval_minutes", 180)),
+            ):
+                continue
+            if self.client_is_speaking or self.active_turn_recorder is not None or self.tts is None or self.llm is None:
+                continue
+            self.last_companion_proactive_time = now
+            await self.loop.run_in_executor(self.executor, self._emit_companion_proactive_message)
+
+    def _emit_companion_proactive_message(self):
+        rules = self.companion_session.overlay.get("proactive_behavior_rules") or []
+        instruction = (
+            "在用户一段时间没有说话后，以当前人物身份主动发起一句自然、简短、不施压的关心。"
+            "不要假装用户刚刚说过话，不要虚构事件，不要要求用户必须回复。"
+        )
+        if rules:
+            instruction += "主动行为偏好：" + "；".join(str(item)[:200] for item in rules[:6])
+        context = self._build_companion_context(instruction)
+        messages = self.dialogue.get_llm_dialogue_with_memory(
+            companion_context=context,
+        )
+        messages.append({"role": "user", "content": instruction})
+        try:
+            chunks = self.llm.response(self.session_id, messages)
+            text = "".join(str(chunk) for chunk in chunks if chunk)[:300].strip()
+            if not text:
+                return
+            sentence_id = str(uuid.uuid4().hex)
+            self.tts.tts_text_queue.put(TTSMessageDTO(
+                sentence_id=sentence_id,
+                sentence_type=SentenceType.FIRST,
+                content_type=ContentType.ACTION,
+            ))
+            self.tts.tts_text_queue.put(TTSMessageDTO(
+                sentence_id=sentence_id,
+                sentence_type=SentenceType.MIDDLE,
+                content_type=ContentType.TEXT,
+                content_detail=text,
+            ))
+            self.tts.tts_text_queue.put(TTSMessageDTO(
+                sentence_id=sentence_id,
+                sentence_type=SentenceType.LAST,
+                content_type=ContentType.ACTION,
+            ))
+            metrics.increment("companion_proactive_message_total")
+        except Exception as error:
+            metrics.increment("companion_proactive_message_failed_total")
+            self.logger.bind(tag=TAG).warning(f"Companion 主动消息生成失败: {error}")
 
     def _initialize_memory(self):
         if self.memory is None:
@@ -1049,7 +1258,13 @@ class ConnectionHandler:
         # 更新系统prompt至上下文
         self.dialogue.update_system_message(self.prompt)
 
-    def chat(self, query, depth=0):
+    def chat(
+            self,
+            query,
+            depth=0,
+            turn_recorder=None,
+            companion_context=None,
+    ):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
 
@@ -1058,6 +1273,11 @@ class ConnectionHandler:
 
         # 为最顶层时新建会话ID和发送FIRST请求
         if depth == 0:
+            if query:
+                self.last_companion_user_turn_time = time.time()
+            turn_recorder = TurnRecorder(query or "")
+            self.active_turn_recorder = turn_recorder
+            companion_context = self._build_companion_context(query)
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
             self.dialogue.put(Message(role="user", content=query))
@@ -1128,7 +1348,10 @@ class ConnectionHandler:
                 llm_responses = self.llm.response_with_functions(
                     self.session_id,
                     self.dialogue.get_llm_dialogue_with_memory(
-                        memory_str, self.config.get("voiceprint", {}), speaker_for_system
+                        memory_str,
+                        self.config.get("voiceprint", {}),
+                        speaker_for_system,
+                        companion_context=companion_context,
                     ),
                     functions=functions,
                 )
@@ -1136,11 +1359,18 @@ class ConnectionHandler:
                 llm_responses = self.llm.response(
                     self.session_id,
                     self.dialogue.get_llm_dialogue_with_memory(
-                        memory_str, self.config.get("voiceprint", {}), speaker_for_system
+                        memory_str,
+                        self.config.get("voiceprint", {}),
+                        speaker_for_system,
+                        companion_context=companion_context,
                     ),
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+            if turn_recorder is not None:
+                turn_recorder.mark_failed(str(e))
+            if depth == 0:
+                self._finalize_companion_turn(turn_recorder)
             return None
 
         # 处理流式响应
@@ -1184,6 +1414,8 @@ class ConnectionHandler:
                                     new_part = self._clean_response_garbage(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
+                                        if turn_recorder is not None:
+                                            turn_recorder.append_assistant_chunk(new_part)
                                         self.tts.tts_text_queue.put(
                                             TTSMessageDTO(
                                                 sentence_id=current_sentence_id,
@@ -1197,7 +1429,15 @@ class ConnectionHandler:
 
                 # 在llm回复中获取情绪表情，一轮对话只在开头获取一次
                 if emotion_flag and content is not None and content.strip():
-                    if (self.features or {}).get("emoji", True):
+                    presentation = resolve_presentation(self.companion_session, content)
+                    if self.tts is not None and hasattr(self.tts, "set_emotion_style"):
+                        self.tts.set_emotion_style(presentation.emotion)
+                    if (self.features or {}).get("companion_presentation", False):
+                        asyncio.run_coroutine_threadsafe(
+                            send_presentation(self, presentation),
+                            self.loop,
+                        )
+                    elif (self.features or {}).get("emoji", True):
                         asyncio.run_coroutine_threadsafe(
                             textUtils.get_emotion(self, content),
                             self.loop,
@@ -1207,6 +1447,8 @@ class ConnectionHandler:
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
                         response_message.append(content)
+                        if turn_recorder is not None:
+                            turn_recorder.append_assistant_chunk(content)
                         self.tts.tts_text_queue.put(
                             TTSMessageDTO(
                                 sentence_id=current_sentence_id,
@@ -1217,6 +1459,8 @@ class ConnectionHandler:
                         )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
+            if turn_recorder is not None:
+                turn_recorder.mark_failed(str(e))
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
                     sentence_id=current_sentence_id,
@@ -1233,6 +1477,7 @@ class ConnectionHandler:
                         content_type=ContentType.ACTION,
                     )
                 )
+                self._finalize_companion_turn(turn_recorder)
             return
         # 处理function call
         if tool_call_flag:
@@ -1256,9 +1501,13 @@ class ConnectionHandler:
                     except Exception as e:
                         bHasError = True
                         response_message.append(a)
+                        if turn_recorder is not None:
+                            turn_recorder.append_assistant_chunk(a)
                 else:
                     bHasError = True
                     response_message.append(content_arguments)
+                    if turn_recorder is not None:
+                        turn_recorder.append_assistant_chunk(content_arguments)
                 if bHasError:
                     self.logger.bind(tag=TAG).error(
                         f"function call error: {content_arguments}"
@@ -1282,6 +1531,8 @@ class ConnectionHandler:
                             if remaining:
                                 remaining = self._clean_response_garbage(remaining)
                                 if remaining:
+                                    if turn_recorder is not None:
+                                        turn_recorder.append_assistant_chunk(remaining)
                                     self.tts.tts_text_queue.put(
                                         TTSMessageDTO(
                                             sentence_id=current_sentence_id,
@@ -1304,6 +1555,7 @@ class ConnectionHandler:
                                     content_type=ContentType.ACTION,
                                 )
                             )
+                            self._finalize_companion_turn(turn_recorder)
                         return
 
                     tool_calls_list = real_tool_calls
@@ -1349,6 +1601,12 @@ class ConnectionHandler:
                     try:
                         result = future.result(timeout=tool_call_timeout)
                         tool_results.append((result, tool_call_data))
+                        if turn_recorder is not None:
+                            turn_recorder.record_tool(
+                                tool_call_data["name"],
+                                tool_input,
+                                result.result if result.result is not None else result.response,
+                            )
                         # 使用公共方法上报工具调用结果
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(result.result) if result.result else None, report_tool_call=False)
 
@@ -1361,12 +1619,22 @@ class ConnectionHandler:
                             ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
                             tool_call_data
                         ))
+                        if turn_recorder is not None:
+                            turn_recorder.record_tool(
+                                tool_call_data["name"], tool_input, {"error": str(e)}
+                            )
                         # 上报工具调用错误
                         enqueue_tool_report(self, tool_call_data['name'], tool_input, str(e), report_tool_call=False)
 
                 # 统一处理工具调用结果
                 if tool_results:
-                    self._handle_function_result(tool_results, depth=depth, streamed_text=streamed_text)
+                    self._handle_function_result(
+                        tool_results,
+                        depth=depth,
+                        streamed_text=streamed_text,
+                        turn_recorder=turn_recorder,
+                        companion_context=companion_context,
+                    )
 
         # 存储对话内容
         if len(response_message) > 0:
@@ -1375,6 +1643,8 @@ class ConnectionHandler:
             self.dialogue.put(Message(role="assistant", content=text_buff))
 
         if depth == 0:
+            if self.client_abort and turn_recorder is not None:
+                turn_recorder.mark_aborted()
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
                     sentence_id=current_sentence_id,
@@ -1388,10 +1658,18 @@ class ConnectionHandler:
                     self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False
                 )
             )
+            self._finalize_companion_turn(turn_recorder)
 
         return True
 
-    def _handle_function_result(self, tool_results, depth, streamed_text=""):
+    def _handle_function_result(
+            self,
+            tool_results,
+            depth,
+            streamed_text="",
+            turn_recorder=None,
+            companion_context=None,
+    ):
         need_llm_tools = []
         record_tools = []
 
@@ -1401,7 +1679,10 @@ class ConnectionHandler:
                 Action.NOTFOUND,
                 Action.ERROR,
             ]:
-                text = result.response if result.response else result.result
+                text = self._personalize_immediate_tool_response(
+                    result.response if result.response else result.result,
+                    result.action,
+                )
                 if streamed_text and text in streamed_text:
                     self.logger.bind(tag=TAG).debug(
                         f"Skipping duplicate TTS for tool {tool_call_data['name']}, already streamed"
@@ -1409,6 +1690,8 @@ class ConnectionHandler:
                 else:
                     self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
                     self.tts.store_tts_text(self.sentence_id, text)
+                    if turn_recorder is not None:
+                        turn_recorder.append_assistant_chunk(text)
                 self.dialogue.put(Message(role="assistant", content=text))
             elif result.action == Action.REQLLM:
                 need_llm_tools.append((result, tool_call_data))
@@ -1457,11 +1740,14 @@ class ConnectionHandler:
             # 用固定文本作为最终回复，补全标准三段式，保证下一条消息是 user 而非接 tool
             response_parts = []
             for result, _ in record_tools:
-                resp = result.response or result.result
+                resp = sanitize_tool_output(result.response or result.result)
                 if resp:
                     response_parts.append(resp)
             if response_parts:
-                self.dialogue.put(Message(role="assistant", content="，".join(response_parts)))
+                record_response = "，".join(response_parts)
+                self.dialogue.put(Message(role="assistant", content=record_response))
+                if turn_recorder is not None:
+                    turn_recorder.append_assistant_chunk(record_response)
 
         if need_llm_tools:
             all_tool_calls = [
@@ -1483,7 +1769,7 @@ class ConnectionHandler:
             self.dialogue.put(Message(role="assistant", tool_calls=all_tool_calls))
 
             for result, tool_call_data in need_llm_tools:
-                text = result.result
+                text = sanitize_tool_output(result.result)
                 if text is not None and len(text) > 0:
                     self.dialogue.put(
                         Message(
@@ -1497,7 +1783,12 @@ class ConnectionHandler:
                         )
                     )
 
-            self.chat(None, depth=depth + 1)
+            self.chat(
+                None,
+                depth=depth + 1,
+                turn_recorder=turn_recorder,
+                companion_context=companion_context,
+            )
 
     def _report_worker(self):
         """聊天记录上报工作线程"""
@@ -1540,6 +1831,10 @@ class ConnectionHandler:
     async def close(self, ws=None):
         """资源清理方法"""
         try:
+            if self.companion_proactive_task is not None and not self.companion_proactive_task.done():
+                self.companion_proactive_task.cancel()
+            self.companion_proactive_task = None
+
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")

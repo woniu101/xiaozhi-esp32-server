@@ -153,6 +153,7 @@ cython_debug/
 tmp
 .history
 .DS_Store
+*:Zone.Identifier
 main/xiaozhi-server/data
 main/xiaozhi-server/.claude
 

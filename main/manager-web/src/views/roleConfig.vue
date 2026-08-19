@@ -19,6 +19,9 @@
                 <span v-if="currentVersionNo" class="current-version-tag">
                   {{ $t("roleConfig.currentVersion", { version: currentVersionNo }) }}
                 </span>
+                <span class="save-state-tag" :class="{ dirty: hasUnsavedChanges }">
+                  {{ hasUnsavedChanges ? '有未保存修改' : '已保存，等待设备重启生效' }}
+                </span>
               </div>
               <div class="header-tags">
                 <el-tag
@@ -69,8 +72,21 @@
 
             <el-form ref="form" :model="form" label-width="72px">
               <div class="form-content">
+                <div class="effective-config">
+                  <div class="effective-config__title">当前配置预览</div>
+                  <div class="effective-config__items">
+                    <span><b>人物</b>{{ effectivePersonaLabel }}</span>
+                    <span><b>关系记忆</b>{{ form.companionEnabled ? '独立启用' : '未启用' }}</span>
+                    <span><b>旧版记忆</b>{{ selectedModelLabel('Memory', form.model.memModelId) || '未配置' }}</span>
+                    <span><b>意图链</b>{{ selectedModelLabel('Intent', form.model.intentModelId) || '未配置' }}</span>
+                    <span><b>声音</b>{{ selectedVoiceLabel || '未配置' }}</span>
+                    <span><b>动态情绪</b>{{ dynamicEmotionStatus }}</span>
+                  </div>
+                  <div class="effective-config__hint">这是已加载的草稿配置；保存后重启设备才会成为运行时配置。</div>
+                </div>
                 <div class="form-grid">
                   <div class="form-column">
+                    <div class="config-section-title"><span>1</span>人物身份</div>
                     <el-form-item>
                       <template #label>
                         <el-tooltip :content="$t('roleConfig.tooltip.agentName')" placement="top" effect="light" popper-class="custom-tooltip">
@@ -83,6 +99,97 @@
                         maxlength="64"
                       />
                     </el-form-item>
+                    <div class="config-section-title"><span>2</span>人物关系与记忆</div>
+                    <el-form-item>
+                      <template #label>
+                        <el-tooltip :content="$t('roleConfig.tooltip.companion')" placement="top" effect="light" popper-class="custom-tooltip">
+                          <span>{{ $t('roleConfig.companion') }}：</span>
+                        </el-tooltip>
+                      </template>
+                      <div class="companion-config">
+                        <div class="companion-heading">
+                          <el-switch
+                            v-model="form.companionEnabled"
+                            :active-text="$t('roleConfig.companionEnabled')"
+                            @change="handleCompanionToggle"
+                          />
+                          <el-button type="text" icon="el-icon-user-solid" @click="$router.push('/persona-library')">
+                            {{ $t('roleConfig.openPersonaLibrary') }}
+                          </el-button>
+                        </div>
+                        <el-select
+                          v-model="form.personaId"
+                          :disabled="!form.companionEnabled"
+                          :placeholder="$t('roleConfig.personaIdPlaceholder')"
+                          filterable
+                          clearable
+                          class="form-input"
+                          @change="handlePersonaChange"
+                        >
+                          <el-option v-for="item in personaOptions" :key="item.personaId"
+                            :value="item.personaId" :label="`${item.displayName} · ${item.personaId}`">
+                            <span>{{ item.displayName }}</span>
+                            <span class="persona-option-meta">{{ item.relationshipCeiling }} · {{ item.publishedVersion }}</span>
+                          </el-option>
+                        </el-select>
+                        <el-select
+                          v-model="form.personaVersion"
+                          :disabled="!form.companionEnabled"
+                          :placeholder="$t('roleConfig.personaVersionPlaceholder')"
+                          clearable
+                          class="form-input"
+                        >
+                          <el-option value="" :label="$t('roleConfig.personaLatestVersion')" />
+                          <el-option v-for="item in personaVersions" :key="item.version"
+                            :value="item.version" :label="`${item.version} (${item.status})`" />
+                        </el-select>
+                        <div class="overlay-editor" :class="{ disabled: !form.companionEnabled }">
+                          <div class="overlay-row">
+                            <el-input v-model.trim="companionOverlayForm.user_address" :disabled="!form.companionEnabled"
+                              :placeholder="$t('roleConfig.userAddressPlaceholder')" maxlength="40" />
+                            <el-select v-model="companionOverlayForm.initial_stage" :disabled="!form.companionEnabled"
+                              :placeholder="$t('roleConfig.initialStage')" clearable>
+                              <el-option v-for="stage in companionStages" :key="stage" :value="stage" :label="$t(`roleConfig.stage_${stage}`)" />
+                            </el-select>
+                          </div>
+                          <el-select v-model="companionOverlayForm.allowed_stages" :disabled="!form.companionEnabled"
+                            multiple :placeholder="$t('roleConfig.allowedStages')" class="form-input">
+                            <el-option v-for="stage in companionStages" :key="stage" :value="stage" :label="$t(`roleConfig.stage_${stage}`)" />
+                          </el-select>
+                          <el-input v-model.trim="companionOverlayForm.voice_reply_style" :disabled="!form.companionEnabled"
+                            :placeholder="$t('roleConfig.voiceReplyStyle')" maxlength="200" />
+                          <el-input v-model.trim="companionOverlayForm.tool_ack_prefix" :disabled="!form.companionEnabled"
+                            :placeholder="$t('roleConfig.toolAckPrefix')" maxlength="100" />
+                          <div class="proactive-settings">
+                            <el-switch v-model="companionOverlayForm.proactive_enabled" :disabled="!form.companionEnabled"
+                              active-text="启用主动关心" />
+                            <span>最短间隔（分钟）</span>
+                            <el-input-number v-model="companionOverlayForm.proactive_interval_minutes"
+                              :disabled="!form.companionEnabled || !companionOverlayForm.proactive_enabled"
+                              :min="5" :max="10080" :step="30" size="small" />
+                          </div>
+                          <div class="advanced-toggle">
+                            <el-switch v-model="companionAdvanced" :active-text="$t('roleConfig.advancedOverlay')" />
+                          </div>
+                          <el-input v-if="companionAdvanced" v-model="form.companionOverlay"
+                            :disabled="!form.companionEnabled" type="textarea" :rows="4" resize="none"
+                            :placeholder="$t('roleConfig.companionOverlayPlaceholder')" @blur="syncOverlayFormFromJson" />
+                        </div>
+                        <div v-if="companionSummary" class="companion-summary">
+                          {{ $t('roleConfig.companionSummary', {
+                            stage: companionSummary.stage,
+                            turns: companionSummary.meaningfulTurns,
+                            memories: companionSummary.memoryCount
+                          }) }}
+                          <el-button type="text" class="companion-reset" @click="resetCompanionState">
+                            {{ $t('roleConfig.resetCompanionState') }}
+                          </el-button>
+                          <el-button type="text" @click="openCompanionMemories">管理人物记忆</el-button>
+                          <div class="persona-state-hint">每个人物拥有独立的关系和记忆；切换回来会恢复该人物原来的状态。</div>
+                        </div>
+                      </div>
+                    </el-form-item>
+                    <div class="config-subsection-title">对话快捷配置</div>
                     <el-form-item>
                       <template #label>
                         <el-tooltip :content="$t('roleConfig.tooltip.roleTemplate')" placement="top" effect="light" popper-class="custom-tooltip">
@@ -120,41 +227,6 @@
                         </el-button>
                       </div>
                     </el-form-item>
-                    <el-form-item>
-                      <template #label>
-                        <el-tooltip :content="$t('roleConfig.tooltip.roleIntroduction')" placement="top" effect="light" popper-class="custom-tooltip">
-                          <span>{{ $t('roleConfig.roleIntroduction') }}：</span>
-                        </el-tooltip>
-                      </template>
-                      <el-input
-                        type="textarea"
-                        rows="8"
-                        resize="none"
-                        :placeholder="$t('roleConfig.pleaseEnterContent')"
-                        v-model="form.systemPrompt"
-                        maxlength="2000"
-                        show-word-limit
-                        class="form-textarea"
-                      />
-                    </el-form-item>
-
-                    <el-form-item>
-                      <template #label>
-                        <el-tooltip :content="$t('roleConfig.tooltip.memoryHis')" placement="top" effect="light" popper-class="custom-tooltip">
-                          <span>{{ $t('roleConfig.memoryHis') }}：</span>
-                        </el-tooltip>
-                      </template>
-                      <el-input
-                        type="textarea"
-                        rows="4"
-                        resize="none"
-                        v-model="form.summaryMemory"
-                        maxlength="2000"
-                        show-word-limit
-                        class="form-textarea"
-                        :disabled="form.model.memModelId !== 'Memory_mem_local_short'"
-                      />
-                    </el-form-item>
                     <el-form-item
                       style="display: none"
                     >
@@ -189,6 +261,7 @@
                     </el-form-item>
                   </div>
                   <div class="form-column">
+                    <div class="config-section-title"><span>3</span>对话与能力</div>
                     <div class="model-row">
                       <el-form-item 
                         v-if="featureStatus.vad" 
@@ -294,13 +367,17 @@
                       v-for="(model, index) in models.slice(4)"
                       :key="`model-${index}`"
                       class="model-item"
+                      :class="{ 'legacy-memory-item': model.type === 'Memory' }"
                     >
                       <template #label>
                         <el-tooltip :content="$t('roleConfig.tooltip.' + model.type.toLowerCase())" placement="top" effect="light" popper-class="custom-tooltip">
                           <span>{{ $t('roleConfig.' + model.type.toLowerCase()) }}</span>
                         </el-tooltip>
                       </template>
-                      <div class="model-select-wrapper">
+                      <div
+                        class="model-select-wrapper"
+                        :class="{ 'legacy-memory-wrapper': model.type === 'Memory' }"
+                      >
                         <el-select
                           v-model="form.model[model.key]"
                           filterable
@@ -310,11 +387,12 @@
                           @change="handleModelChange(model.type, $event)"
                         >
                           <el-option
-                            v-for="(item, optionIndex) in modelOptions[model.type]"
+                            v-for="(item, optionIndex) in visibleModelOptions(model.type)"
                             v-if="!item.isHidden"
                             :key="`option-${index}-${optionIndex}`"
                             :label="item.label"
                             :value="item.value"
+                            :disabled="model.type === 'Intent' && form.companionEnabled && !isCompanionIntentCompatible(item.value)"
                           />
                         </el-select>
                         <div v-if="showFunctionIcons(model.type)" class="function-icons">
@@ -358,8 +436,32 @@
                             }}</el-radio-button>
                           </el-radio-group>
                         </div>
+                        <div v-if="model.type === 'Memory'" class="legacy-memory-controls">
+                          <el-alert
+                            v-if="form.companionEnabled"
+                            class="legacy-memory-hint"
+                            type="warning"
+                            :closable="false"
+                            show-icon
+                            title="兼容模式：Companion 已负责人物关系与长期记忆，建议选择“无记忆”或“仅上报”。"
+                          />
+                          <div class="legacy-memory-actions">
+                            <el-switch
+                              v-if="form.companionEnabled"
+                              v-model="legacyMemoryAdvanced"
+                              active-text="显示旧版高级提供器"
+                            />
+                            <el-button type="text" class="danger-text-button" @click="clearLegacyMemory">
+                              清除旧版记录与摘要
+                            </el-button>
+                          </div>
+                        </div>
+                        <el-alert v-if="model.type === 'Intent' && form.companionEnabled && !isCompanionIntentCompatible(form.model.intentModelId)"
+                          class="intent-compatibility-alert" type="error" :closable="false" show-icon
+                          title="该旧版意图链会绕过人物上下文与轮次结算。请改用“大模型自主函数调用”或“无意图识别”。" />
                       </div>
                     </el-form-item>
+                    <div class="config-section-title"><span>4</span>声音与表达</div>
                     <div class="model-row">
                       <!-- 语言筛选器 -->
                       <el-form-item class="model-item language-select-item">
@@ -403,7 +505,7 @@
                             @change="handleVoiceChange"
                           >
                             <el-option
-                              v-for="(item, index) in voiceOptions"
+                              v-for="(item, index) in availableVoiceOptions"
                               :key="`voice-${index}`"
                               :label="item.label"
                               :value="item.value"
@@ -447,6 +549,47 @@
                     </div>
                   </div>
                 </div>
+                <div class="advanced-section">
+                  <div class="config-section-title"><span>5</span>高级与兼容</div>
+                  <div class="advanced-config-toggle">
+                    <el-switch v-model="advancedConfig" active-text="显示基础系统规则与兼容字段" />
+                    <span v-if="form.companionEnabled">启用 Companion 后，人物特性由 Persona 决定；这里只保留中性的系统规则。</span>
+                  </div>
+                  <el-form-item v-if="advancedConfig || !form.companionEnabled">
+                    <template #label>
+                      <el-tooltip :content="$t('roleConfig.tooltip.roleIntroduction')" placement="top" effect="light" popper-class="custom-tooltip">
+                        <span>{{ $t('roleConfig.roleIntroduction') }}：</span>
+                      </el-tooltip>
+                    </template>
+                    <el-input
+                      type="textarea"
+                      rows="6"
+                      resize="none"
+                      :placeholder="$t('roleConfig.pleaseEnterContent')"
+                      v-model="form.systemPrompt"
+                      maxlength="2000"
+                      show-word-limit
+                      class="form-textarea"
+                    />
+                  </el-form-item>
+                  <el-form-item v-if="form.model.memModelId === 'Memory_mem_local_short'">
+                    <template #label>
+                      <el-tooltip :content="$t('roleConfig.tooltip.memoryHis')" placement="top" effect="light" popper-class="custom-tooltip">
+                        <span>{{ $t('roleConfig.memoryHis') }}：</span>
+                      </el-tooltip>
+                    </template>
+                    <el-input
+                      type="textarea"
+                      rows="4"
+                      resize="none"
+                      v-model="form.summaryMemory"
+                      maxlength="2000"
+                      show-word-limit
+                      class="form-textarea"
+                      :disabled="form.model.memModelId !== 'Memory_mem_local_short'"
+                    />
+                  </el-form-item>
+                </div>
               </div>
             </el-form>
           </el-card>
@@ -479,6 +622,63 @@
         :current-version-no="currentVersionNo"
         @restored="handleSnapshotRestored"
       />
+    <el-dialog title="预览并应用角色模板" :visible.sync="showTemplatePreview" width="560px">
+      <el-alert type="info" :closable="false" show-icon
+        title="默认只更新基础系统规则；Companion 人物、关系状态、人物记忆和声音不会被覆盖。" />
+      <el-checkbox-group v-model="templateScopes" class="template-scope-options">
+        <el-checkbox label="base">名称与基础系统规则</el-checkbox>
+        <el-checkbox label="capabilities">对话模型与能力</el-checkbox>
+        <el-checkbox label="legacyMemory">旧版记忆配置</el-checkbox>
+        <el-checkbox label="voice">声音配置</el-checkbox>
+      </el-checkbox-group>
+      <div class="template-preview-list" v-if="pendingTemplate">
+        <div><b>模板</b><span>{{ pendingTemplate.agentName }}</span></div>
+        <div><b>保留</b><span>Persona、版本、Overlay、关系状态与人物记忆</span></div>
+        <div><b>声音</b><span>{{ templateScopes.includes('voice') ? '将更新' : '保持当前配置' }}</span></div>
+        <div><b>旧版记忆</b><span>{{ templateScopes.includes('legacyMemory') ? '将更新配置，不删除现有数据' : '保持当前配置' }}</span></div>
+      </div>
+      <span slot="footer">
+        <el-button @click="showTemplatePreview = false">取消</el-button>
+        <el-button type="primary" :disabled="templateScopes.length === 0" @click="confirmTemplateApply">应用所选范围</el-button>
+      </span>
+    </el-dialog>
+    <el-dialog title="人物记忆管理" :visible.sync="showCompanionMemories" width="780px">
+      <el-alert type="info" :closable="false" show-icon
+        :title="`这里只管理当前人物 ${form.personaId || ''} 的记忆；切换人物后会看到另一套独立记忆。`" />
+      <div v-if="editingMemory" class="memory-edit-panel">
+        <el-input v-model.trim="memoryEditForm.content" type="textarea" :rows="3" maxlength="1000" show-word-limit />
+        <div class="memory-edit-row">
+          <span>重要度</span>
+          <el-slider v-model="memoryEditForm.importance" :min="0" :max="1" :step="0.05" show-input />
+          <span>过期时间</span>
+          <el-date-picker v-model="memoryEditForm.expiresAt" type="datetime" value-format="yyyy-MM-dd'T'HH:mm:ss"
+            placeholder="永久保留" clearable />
+        </div>
+        <div class="memory-edit-actions">
+          <el-button size="small" @click="editingMemory = null">取消编辑</el-button>
+          <el-button size="small" type="primary" @click="saveCompanionMemory">保存记忆</el-button>
+        </div>
+      </div>
+      <el-table :data="companionMemories" v-loading="companionMemoriesLoading" max-height="430">
+        <el-table-column prop="memoryType" label="类型" width="90" />
+        <el-table-column prop="content" label="内容" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="status" label="状态" width="95">
+          <template slot-scope="scope">
+            <el-tag size="mini" :type="scope.row.status === 'active' ? 'success' : 'info'">
+              {{ scope.row.status === 'active' ? '有效' : '已被更新' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="importance" label="重要度" width="80" />
+        <el-table-column label="操作" width="125" align="right">
+          <template slot-scope="scope">
+            <el-button type="text" :disabled="scope.row.status !== 'active'" @click="editCompanionMemory(scope.row)">编辑</el-button>
+            <el-button type="text" class="companion-reset" @click="deleteCompanionMemory(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!companionMemoriesLoading && companionMemories.length === 0" class="memory-empty">当前人物还没有形成长期记忆。</div>
+    </el-dialog>
     <el-footer>
       <version-footer />
     </el-footer>
@@ -522,6 +722,10 @@ export default {
         chatHistoryConf: 0,
         systemPrompt: "",
         summaryMemory: "",
+        companionEnabled: false,
+        personaId: "",
+        personaVersion: "",
+        companionOverlay: "{}",
         langCode: "",
         language: "",
         sort: "",
@@ -590,21 +794,110 @@ export default {
       originalTagNames: [],
       inputVisible: false,
       inputValue: '',
-      checkedReplacementWordIds: []
+      checkedReplacementWordIds: [],
+      companionSummary: null,
+      personaOptions: [],
+      personaVersions: [],
+      companionStages: ["stranger", "familiar", "friend", "ambiguous", "lover", "intimate"],
+      companionAdvanced: false,
+      advancedConfig: false,
+      legacyMemoryAdvanced: false,
+      showTemplatePreview: false,
+      pendingTemplate: null,
+      templateScopes: ["base"],
+      savedFormFingerprint: "",
+      showCompanionMemories: false,
+      companionMemoriesLoading: false,
+      companionMemories: [],
+      editingMemory: null,
+      memoryEditForm: { content: "", importance: 0.5, expiresAt: null },
+      companionOverlayForm: {
+        user_address: "",
+        initial_stage: "",
+        allowed_stages: [],
+        voice_reply_style: "",
+        tool_ack_prefix: "",
+        proactive_enabled: false,
+        proactive_interval_minutes: 180
+      }
     };
   },
   computed: {
+    availableVoiceOptions() {
+      return this.voiceOptions;
+    },
     configInteractionBlocked() {
       return this.agentReloading
         || this.voiceOptionsLoading
         || !this.agentConfigLoaded
         || !this.agentFunctionsLoaded
         || !this.agentTagsLoaded;
+    },
+    effectivePersonaLabel() {
+      if (!this.form.companionEnabled) return "基础角色";
+      const persona = this.personaOptions.find(item => item.personaId === this.form.personaId);
+      const version = this.form.personaVersion || persona?.publishedVersion || "当前发布版";
+      return persona ? `${persona.displayName} · ${version}` : (this.form.personaId || "未选择");
+    },
+    selectedVoiceLabel() {
+      return this.voiceOptions.find(item => item.value === this.form.ttsVoiceId)?.label
+        || this.voiceDetails?.[this.form.ttsVoiceId]?.name
+        || "";
+    },
+    dynamicEmotionStatus() {
+      const id = String(this.form.model.ttsModelId || "").toLowerCase();
+      return id.includes("minimax") ? "提供器支持" : "仅基础语音（提供器未声明支持）";
+    },
+    hasUnsavedChanges() {
+      return Boolean(this.savedFormFingerprint) && this.formFingerprint() !== this.savedFormFingerprint;
     }
   },
   methods: {
     goToHome() {
       this.$router.push("/home");
+    },
+    selectedModelLabel(type, value) {
+      return (this.modelOptions[type] || []).find(item => item.value === value)?.label || value || "";
+    },
+    formFingerprint() {
+      return JSON.stringify({
+        ...this.form,
+        companionOverlay: this.form.companionOverlay || "{}",
+        companionOverlayDraft: this.companionOverlayForm,
+        selectedLanguage: this.selectedLanguage || "",
+        tagNames: this.dynamicTags.map(item => item.tagName),
+        functions: this.currentFunctions.map(item => ({
+          id: item.id,
+          params: this.normalizeFunctionParams(item.params),
+        })),
+        contextProviders: this.currentContextProviders,
+        replacementWordIds: this.checkedReplacementWordIds,
+      });
+    },
+    visibleModelOptions(type) {
+      const options = this.modelOptions[type] || [];
+      if (type !== "Memory" || !this.form.companionEnabled || this.legacyMemoryAdvanced) {
+        return options;
+      }
+      const recommended = new Set(["Memory_nomem", "Memory_mem_report_only", this.form.model.memModelId]);
+      return options.filter(item => recommended.has(item.value));
+    },
+    handleCompanionToggle(enabled) {
+      const recommendedMemory = new Set(["Memory_nomem", "Memory_mem_report_only"]);
+      if (enabled && !recommendedMemory.has(this.form.model.memModelId)) {
+        this.form.model.memModelId = "Memory_nomem";
+        this.form.chatHistoryConf = 0;
+        this.$message.info("已将旧版对话记忆切换为“无记忆”，避免与人物记忆重复注入；原有数据没有删除。");
+      }
+      if (!enabled) {
+        this.legacyMemoryAdvanced = false;
+      } else if (!this.isCompanionIntentCompatible(this.form.model.intentModelId)) {
+        const functionCall = (this.modelOptions.Intent || []).find(item => item.value === "Intent_function_call");
+        if (functionCall) this.form.model.intentModelId = functionCall.value;
+      }
+    },
+    isCompanionIntentCompatible(value) {
+      return !value || value === "Intent_nointent" || value === "Intent_function_call";
     },
     normalizeFunctionParams(params, fallback = {}) {
       if (params === null || params === undefined || params === '') {
@@ -625,8 +918,104 @@ export default {
       }
       return { ...fallback };
     },
+    loadPersonaOptions() {
+      return new Promise((resolve) => {
+        Api.persona.options(({ data }) => {
+          this.personaOptions = data?.code === 0 && Array.isArray(data.data) ? data.data : [];
+          const requestedPersonaId = this.$route.query.personaId;
+          if (requestedPersonaId && this.personaOptions.some(item => item.personaId === requestedPersonaId)) {
+            this.form.companionEnabled = true;
+            this.form.personaId = requestedPersonaId;
+            this.handlePersonaChange(requestedPersonaId);
+          } else if (this.form.personaId) {
+            this.handlePersonaChange(this.form.personaId);
+          }
+          resolve(true);
+        }, () => resolve(false));
+      });
+    },
+    handlePersonaChange(personaId) {
+      this.personaVersions = [];
+      if (!personaId) {
+        this.form.personaVersion = "";
+        return;
+      }
+      Api.persona.versions(personaId, ({ data }) => {
+        if (data?.code !== 0) return;
+        this.personaVersions = (data.data || []).filter(item => item.status === "published");
+        if (this.form.personaVersion && !this.personaVersions.some(item => item.version === this.form.personaVersion)) {
+          this.form.personaVersion = "";
+        }
+      });
+    },
+    syncOverlayFormFromJson() {
+      try {
+        const value = JSON.parse(this.form.companionOverlay || "{}");
+        this.validateCompanionOverlay(value);
+        this.companionOverlayForm = {
+          user_address: value.user_address || "",
+          initial_stage: value.initial_stage || "",
+          allowed_stages: Array.isArray(value.allowed_stages) ? value.allowed_stages : [],
+          voice_reply_style: value.voice_reply_style || "",
+          tool_ack_prefix: value.tool_ack_prefix || "",
+          proactive_enabled: Boolean(value.proactive_enabled),
+          proactive_interval_minutes: Number(value.proactive_interval_minutes || 180)
+        };
+      } catch (error) {
+        this.$message.error(this.$t("roleConfig.companionOverlayInvalid"));
+      }
+    },
+    buildCompanionOverlay() {
+      let base = JSON.parse(this.form.companionOverlay || "{}");
+      this.validateCompanionOverlay(base);
+      Object.entries(this.companionOverlayForm).forEach(([key, value]) => {
+        const populated = key === "proactive_enabled"
+          ? value === true
+          : Array.isArray(value) ? value.length > 0 : Boolean(value && String(value).trim());
+        if (populated) base[key] = value;
+        else delete base[key];
+      });
+      this.form.companionOverlay = JSON.stringify(base);
+      return this.form.companionOverlay;
+    },
+    validateCompanionOverlay(value) {
+      if (!value || Array.isArray(value) || typeof value !== "object") {
+        throw new TypeError("overlay must be an object");
+      }
+      const textFields = new Set(["ai_identity_notice", "user_address", "voice_reply_style", "tool_rephrase_style", "tool_ack_prefix"]);
+      const listFields = new Set(["allowed_stages", "intimacy_boundaries", "memory_rules", "proactive_behavior_rules", "additional_rules"]);
+      const scalarFields = new Set(["initial_stage", "proactive_enabled", "proactive_interval_minutes"]);
+      Object.entries(value).forEach(([key, item]) => {
+        if (!textFields.has(key) && !listFields.has(key) && !scalarFields.has(key)) {
+          throw new TypeError(`unsupported overlay field: ${key}`);
+        }
+        if (textFields.has(key) && typeof item !== "string") throw new TypeError(`${key} must be text`);
+        if (listFields.has(key) && (!Array.isArray(item) || item.some(entry => typeof entry !== "string"))) {
+          throw new TypeError(`${key} must be a text array`);
+        }
+        if (key === "proactive_enabled" && typeof item !== "boolean") throw new TypeError(`${key} must be boolean`);
+        if (key === "proactive_interval_minutes" && (typeof item !== "number" || item < 5 || item > 10080)) {
+          throw new TypeError(`${key} must be between 5 and 10080`);
+        }
+      });
+      return true;
+    },
     async saveConfig() {
       if (this.configInteractionBlocked) {
+        return;
+      }
+      if (this.form.companionEnabled && !this.form.personaId) {
+        this.$message.error(this.$t("roleConfig.personaIdRequired"));
+        return;
+      }
+      if (this.form.companionEnabled && !this.isCompanionIntentCompatible(this.form.model.intentModelId)) {
+        this.$message.error("当前意图识别会绕过 Companion 人物链，请改用大模型自主函数调用或无意图识别");
+        return;
+      }
+      try {
+        this.buildCompanionOverlay();
+      } catch (error) {
+        this.$message.error(this.$t("roleConfig.companionOverlayInvalid"));
         return;
       }
       const configData = {
@@ -643,6 +1032,10 @@ export default {
         intentModelId: this.form.model.intentModelId,
         systemPrompt: this.form.systemPrompt,
         summaryMemory: this.form.summaryMemory,
+        companionEnabled: this.form.companionEnabled,
+        personaId: this.form.personaId,
+        personaVersion: this.form.personaVersion,
+        companionOverlay: this.form.companionOverlay || "{}",
         langCode: this.form.langCode,
         language: this.form.language,
         sort: this.form.sort,
@@ -689,6 +1082,7 @@ export default {
             if (tagsChanged) {
               this.originalTagNames = [...tagNames];
             }
+            this.originalFunctions = JSON.parse(JSON.stringify(this.currentFunctions));
             if (submittedVoiceFetchSeq === this.voiceFetchSeq
               && submittedTtsLanguageTouched
               && this.selectedLanguage === submittedTtsLanguage) {
@@ -703,6 +1097,7 @@ export default {
             if (submittedVoiceFetchSeq === this.voiceFetchSeq) {
               this.lastValidTtsDraft = this.captureTtsDraft();
             }
+            this.savedFormFingerprint = this.formFingerprint();
             this.$message.success({
               message: i18n.t("roleConfig.saveSuccess"),
               showClose: true,
@@ -738,17 +1133,146 @@ export default {
         this.getAgentTags(agentId, { showError: false }),
         this.fetchCurrentVersion(agentId, { showError: false })
       ]);
+      this.fetchCompanionSummary(agentId);
       if (requestSeq !== this.agentReloadSeq) {
         return false;
       }
 
       this.agentReloading = false;
+      if (results.every(Boolean)) {
+        this.$nextTick(() => {
+          this.savedFormFingerprint = this.formFingerprint();
+        });
+      }
       if (!this.pluginMetadataReady && this.agentConfigLoaded) {
         this.$message.error(i18n.t("roleConfig.fetchPluginsFailed"));
       } else if (!results.every(Boolean)) {
         this.$message.error(i18n.t("roleConfig.fetchConfigFailed"));
       }
       return results.every(Boolean);
+    },
+    fetchCompanionSummary(agentId) {
+      return new Promise((resolve) => {
+        Api.agent.getCompanionSummary(agentId, ({ data }) => {
+          if (data?.code === 0) {
+            this.companionSummary = data.data;
+            resolve(true);
+          } else {
+            this.companionSummary = null;
+            resolve(false);
+          }
+        }, () => {
+          this.companionSummary = null;
+          resolve(false);
+        });
+      });
+    },
+    resetCompanionState() {
+      const agentId = this.$route.query.agentId;
+      this.$confirm(
+        this.$t("roleConfig.resetCompanionConfirm"),
+        this.$t("message.info"),
+        {
+          confirmButtonText: this.$t("button.ok"),
+          cancelButtonText: this.$t("button.cancel"),
+          type: "warning",
+        }
+      ).then(() => {
+        Api.agent.resetCompanionState(agentId, ({ data }) => {
+          if (data?.code === 0) {
+            this.$message.success(this.$t("roleConfig.resetCompanionSuccess"));
+            this.fetchCompanionSummary(agentId);
+          } else {
+            this.$message.error(data?.msg || this.$t("roleConfig.resetCompanionFailed"));
+          }
+        });
+      }).catch(() => {});
+    },
+    clearLegacyMemory() {
+      const agentId = this.$route.query.agentId;
+      this.$confirm(
+        "这会永久删除旧版聊天记录和本地短记忆摘要，但不会删除 Companion 的人物关系与记忆。确定继续吗？",
+        "清除旧版记忆",
+        {
+          confirmButtonText: this.$t("button.ok"),
+          cancelButtonText: this.$t("button.cancel"),
+          type: "warning",
+        }
+      ).then(() => {
+        Api.agent.clearLegacyMemory(agentId, ({ data }) => {
+          if (data?.code === 0) {
+            this.form.summaryMemory = "";
+            this.$message.success("旧版聊天记录与摘要已清除");
+          } else {
+            this.$message.error(data?.msg || "清除旧版记忆失败");
+          }
+        });
+      }).catch(() => {});
+    },
+    openCompanionMemories() {
+      this.showCompanionMemories = true;
+      this.editingMemory = null;
+      this.loadCompanionMemories();
+    },
+    loadCompanionMemories() {
+      const agentId = this.$route.query.agentId;
+      this.companionMemoriesLoading = true;
+      Api.agent.getCompanionMemories(agentId, ({ data }) => {
+        this.companionMemoriesLoading = false;
+        if (data?.code === 0) {
+          this.companionMemories = data.data || [];
+        } else {
+          this.companionMemories = [];
+          this.$message.error(data?.msg || "加载人物记忆失败");
+        }
+      }, () => {
+        this.companionMemoriesLoading = false;
+        this.companionMemories = [];
+        this.$message.error("加载人物记忆失败，请检查服务连接");
+      });
+    },
+    editCompanionMemory(memory) {
+      this.editingMemory = memory;
+      this.memoryEditForm = {
+        content: memory.content || "",
+        importance: Number(memory.importance ?? 0.5),
+        expiresAt: memory.expiresAt || null,
+      };
+    },
+    saveCompanionMemory() {
+      if (!this.editingMemory || !this.memoryEditForm.content) return;
+      Api.agent.updateCompanionMemory(
+        this.$route.query.agentId,
+        this.editingMemory.id,
+        this.memoryEditForm,
+        ({ data }) => {
+          if (data?.code === 0) {
+            this.$message.success("人物记忆已更新");
+            this.editingMemory = null;
+            this.loadCompanionMemories();
+            this.fetchCompanionSummary(this.$route.query.agentId);
+          } else {
+            this.$message.error(data?.msg || "更新人物记忆失败");
+          }
+        }
+      );
+    },
+    deleteCompanionMemory(memory) {
+      this.$confirm(`永久删除这条人物记忆：“${String(memory.content || '').slice(0, 40)}”？`, "删除人物记忆", {
+        confirmButtonText: this.$t("button.ok"),
+        cancelButtonText: this.$t("button.cancel"),
+        type: "warning",
+      }).then(() => {
+        Api.agent.deleteCompanionMemory(this.$route.query.agentId, memory.id, ({ data }) => {
+          if (data?.code === 0) {
+            this.$message.success("人物记忆已删除");
+            this.loadCompanionMemories();
+            this.fetchCompanionSummary(this.$route.query.agentId);
+          } else {
+            this.$message.error(data?.msg || "删除人物记忆失败");
+          }
+        });
+      }).catch(() => {});
     },
     handleSnapshotRestored() {
       const agentId = this.$route.query.agentId;
@@ -793,44 +1317,14 @@ export default {
       });
     },
     resetConfig() {
-      this.$confirm(i18n.t("roleConfig.confirmReset"), i18n.t("message.info"), {
+      this.$confirm("放弃当前页面尚未保存的修改，并重新加载最后一次保存的配置？", i18n.t("message.info"), {
         confirmButtonText: i18n.t("button.ok"),
         cancelButtonText: i18n.t("button.cancel"),
         type: "warning",
       })
-        .then(() => {
-          this.selectedLanguage = "";
-          this.ttsLanguageTouched = true;
-          this.ttsVoiceTouched = true;
-          this.form = {
-            agentCode: "",
-            agentName: "",
-            ttsVoiceId: "",
-            ttsLanguage: "",
-            chatHistoryConf: 0,
-            systemPrompt: "",
-            summaryMemory: "",
-            langCode: "",
-            language: "",
-            sort: "",
-            model: {
-              ttsModelId: "",
-              vadModelId: "",
-              asrModelId: "",
-              llmModelId: "",
-              slmModelId: "",
-              vllmModelId: "",
-              memModelId: "",
-              intentModelId: "",
-            },
-          };
-          this.fetchVoiceOptions("");
-          this.dynamicTags = [];
-          this.currentFunctions = [];
-          this.$message.success({
-            message: i18n.t("roleConfig.resetSuccess"),
-            showClose: true,
-          });
+        .then(async () => {
+          await this.reloadAgentPage(this.$route.query.agentId, { closeEditors: true });
+          this.$message.success({ message: "已恢复最后一次保存的配置", showClose: true });
         })
         .catch(() => {});
     },
@@ -845,13 +1339,20 @@ export default {
     },
     selectTemplate(template) {
       if (this.loadingTemplate) return;
+      this.pendingTemplate = template;
+      this.templateScopes = ["base"];
+      this.showTemplatePreview = true;
+    },
+    confirmTemplateApply() {
+      if (!this.pendingTemplate || this.loadingTemplate) return;
       this.loadingTemplate = true;
       try {
-        this.applyTemplateData(template);
+        this.applyTemplateData(this.pendingTemplate, this.templateScopes);
         this.$message.success({
-          message: `${template.agentName}${i18n.t("roleConfig.templateApplied")}`,
+          message: `${this.pendingTemplate.agentName}${i18n.t("roleConfig.templateApplied")}`,
           showClose: true,
         });
+        this.showTemplatePreview = false;
       } catch (error) {
         this.$message.error({
           message: i18n.t("roleConfig.applyTemplateFailed"),
@@ -862,32 +1363,37 @@ export default {
         this.loadingTemplate = false;
       }
     },
-    applyTemplateData(templateData) {
+    applyTemplateData(templateData, scopes = ["base"]) {
       const rollbackState = this.cloneTtsDraft(this.lastValidTtsDraft) || this.captureTtsDraft();
       const currentLanguage = this.selectedLanguage;
-      this.form = {
-        ...this.form,
-        agentName: templateData.agentName || this.form.agentName,
-        ttsVoiceId: templateData.ttsVoiceId || this.form.ttsVoiceId,
-        chatHistoryConf: templateData.chatHistoryConf || this.form.chatHistoryConf,
-        systemPrompt: templateData.systemPrompt || this.form.systemPrompt,
-        summaryMemory: templateData.summaryMemory || this.form.summaryMemory,
-        langCode: templateData.langCode || this.form.langCode,
-        model: {
-          ttsModelId: templateData.ttsModelId || this.form.model.ttsModelId,
-          vadModelId: templateData.vadModelId || this.form.model.vadModelId,
-          asrModelId: templateData.asrModelId || this.form.model.asrModelId,
-          llmModelId: templateData.llmModelId || this.form.model.llmModelId,
-          slmModelId: templateData.llmModelId || this.form.model.slmModelId,
-          vllmModelId: templateData.vllmModelId || this.form.model.vllmModelId,
-          memModelId: templateData.memModelId || this.form.model.memModelId,
-          intentModelId: templateData.intentModelId || this.form.model.intentModelId,
-        },
+      const selected = new Set(scopes);
+      const next = { ...this.form, model: { ...this.form.model } };
+      const assign = (target, key, value) => {
+        if (value !== null && value !== undefined) target[key] = value;
       };
-      if (templateData.ttsLanguage) {
+      if (selected.has("base")) {
+        assign(next, "agentName", templateData.agentName);
+        assign(next, "systemPrompt", templateData.systemPrompt);
+        assign(next, "langCode", templateData.langCode);
+      }
+      if (selected.has("capabilities")) {
+        ["vadModelId", "asrModelId", "llmModelId", "slmModelId", "vllmModelId", "intentModelId"]
+          .forEach(key => assign(next.model, key, templateData[key]));
+      }
+      if (selected.has("legacyMemory")) {
+        assign(next, "chatHistoryConf", templateData.chatHistoryConf);
+        assign(next, "summaryMemory", templateData.summaryMemory);
+        assign(next.model, "memModelId", templateData.memModelId);
+      }
+      if (selected.has("voice")) {
+        assign(next, "ttsVoiceId", templateData.ttsVoiceId);
+        assign(next.model, "ttsModelId", templateData.ttsModelId);
+      }
+      this.form = next;
+      if (selected.has("voice") && templateData.ttsLanguage !== null && templateData.ttsLanguage !== undefined) {
         this.selectedLanguage = templateData.ttsLanguage;
       }
-      if (templateData.ttsModelId || templateData.ttsVoiceId || templateData.ttsLanguage) {
+      if (selected.has("voice") && (templateData.ttsModelId || templateData.ttsVoiceId || templateData.ttsLanguage)) {
         this.fetchVoiceOptions(this.form.model.ttsModelId, {
           autoSelectVoice: true,
           preferredLanguage: templateData.ttsLanguage || (templateData.ttsVoiceId ? "" : currentLanguage),
@@ -984,6 +1490,10 @@ export default {
             this.form = {
               ...this.form,
               ...agentData,
+              companionEnabled: Boolean(agentData.companionEnabled),
+              personaId: agentData.personaId || "",
+              personaVersion: agentData.personaVersion || "",
+              companionOverlay: agentData.companionOverlay || "{}",
               model: {
                 ttsModelId: agentData.ttsModelId,
                 vadModelId: agentData.vadModelId,
@@ -995,6 +1505,8 @@ export default {
                 intentModelId: agentData.intentModelId,
               },
             };
+            this.syncOverlayFormFromJson();
+            this.handlePersonaChange(this.form.personaId);
             this.selectedLanguage = agentData.ttsLanguage || "";
             this.voiceOptions = [];
             this.voiceDetails = {};
@@ -1016,6 +1528,9 @@ export default {
             this.originalFunctions = JSON.parse(JSON.stringify(this.currentFunctions));
             this.agentFunctionsLoaded = true;
             this.agentConfigLoaded = true;
+            this.$nextTick(() => {
+              this.savedFormFingerprint = this.formFingerprint();
+            });
 
             const metadataPromise = this.pluginMetadataReady
               ? Promise.resolve(true)
@@ -1360,13 +1875,8 @@ export default {
           // 有记忆功能的模型，默认记录文本和语音
           this.form.chatHistoryConf = 2;
         }
-        if (value === "Memory_nomem" || value === "Memory_mem_report_only") {
-          this.tempSummaryMemory = this.form.summaryMemory;
-          this.form.summaryMemory = "";
-        } else if (this.tempSummaryMemory !== "" && this.form.summaryMemory === "") {
-          this.form.summaryMemory = this.tempSummaryMemory;
-          this.tempSummaryMemory = "";
-        }
+        // Changing provider controls future behavior only. Existing local summaries
+        // remain intact until the user explicitly clears legacy memory.
       }
       if (type === "LLM") {
         // 当LLM类型改变时，更新意图识别选项的可见性
@@ -1902,8 +2412,9 @@ export default {
     this.lastValidTtsDraft = this.captureTtsDraft();
     const agentId = this.$route.query.agentId;
     if (agentId) {
-      this.reloadAgentPage(agentId);
+      await this.reloadAgentPage(agentId);
     }
+    await this.loadPersonaOptions();
     this.fetchModelOptions();
     this.fetchTemplates();
     // 加载功能状态，确保featureManager已初始化
@@ -2153,6 +2664,31 @@ export default {
   width: 100%;
 }
 
+.legacy-memory-wrapper {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e3e9f5;
+  border-radius: 8px;
+  background: #fafbfe;
+  box-sizing: border-box;
+}
+
+.legacy-memory-wrapper .form-select {
+  flex: none;
+  width: 100%;
+}
+
+.legacy-memory-item ::v-deep .el-form-item__label {
+  width: 94px !important;
+  white-space: nowrap;
+}
+
+.legacy-memory-item ::v-deep .el-form-item__content {
+  margin-left: 94px !important;
+}
+
 .model-row {
   display: flex;
   gap: 20px;
@@ -2345,6 +2881,20 @@ export default {
   margin-left: 8px;
 }
 
+.save-state-tag {
+  margin-left: 6px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: #eef9f3;
+  color: #46a678;
+  font-size: 11px;
+}
+
+.save-state-tag.dirty {
+  background: #fff6e8;
+  color: #d4932d;
+}
+
 .context-provider-item ::v-deep .el-form-item__label {
   line-height: 42px !important;
 }
@@ -2362,6 +2912,253 @@ export default {
 .slider-wrapper {
   width: 100%;
   padding-right: 12px;
+}
+
+.companion-config {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+}
+
+.companion-heading,
+.overlay-row,
+.advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overlay-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e2e7f2;
+  background: #f8faff;
+  border-radius: 8px;
+}
+
+.overlay-editor.disabled {
+  opacity: .72;
+}
+
+.overlay-row > * {
+  flex: 1;
+}
+
+.proactive-settings {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  color: #7b849b;
+  font-size: 12px;
+}
+
+.persona-option-meta {
+  float: right;
+  color: #909399;
+  font-size: 12px;
+}
+
+.companion-summary {
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.persona-state-hint {
+  color: #909399;
+  margin-top: 3px;
+}
+
+.effective-config {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 1px solid #dce6ff;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f7f9ff 0%, #f3fbff 100%);
+}
+
+.effective-config__title {
+  color: #27345c;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.effective-config__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.effective-config__items span {
+  padding: 5px 9px;
+  border: 1px solid #dce5f7;
+  border-radius: 7px;
+  background: #fff;
+  color: #59627d;
+  font-size: 12px;
+}
+
+.effective-config__items b {
+  color: #697492;
+  font-weight: 500;
+  margin-right: 6px;
+}
+
+.effective-config__hint {
+  margin-top: 8px;
+  color: #9098ad;
+  font-size: 11px;
+}
+
+.config-section-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 0 10px;
+  color: #26345c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.config-section-title span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #e9efff;
+  color: #5778ff;
+  font-size: 11px;
+}
+
+.config-subsection-title {
+  margin: 6px 0 8px 72px;
+  color: #697492;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.advanced-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #e8edf7;
+}
+
+.advanced-config-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px 72px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7f8fb;
+  color: #8a92a7;
+  font-size: 11px;
+}
+
+.legacy-memory-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  width: 100%;
+  margin-top: 0;
+}
+
+.legacy-memory-controls ::v-deep .el-alert {
+  padding: 7px 10px;
+}
+
+.legacy-memory-controls ::v-deep .el-alert__title {
+  line-height: 18px;
+}
+
+.legacy-memory-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.intent-compatibility-alert {
+  margin-top: 8px;
+}
+
+.danger-text-button {
+  color: #f56c6c;
+  padding: 0;
+}
+
+.template-scope-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.template-preview-list {
+  border: 1px solid #e5e9f2;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.template-preview-list > div {
+  display: grid;
+  grid-template-columns: 95px 1fr;
+  gap: 12px;
+  padding: 9px 12px;
+  color: #606a82;
+  font-size: 12px;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.template-preview-list > div:last-child {
+  border-bottom: 0;
+}
+
+.memory-edit-panel {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #dfe7f6;
+  border-radius: 8px;
+  background: #f8faff;
+}
+
+.memory-edit-row {
+  display: grid;
+  grid-template-columns: 60px minmax(220px, 1fr) 70px 210px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: #66708a;
+  font-size: 12px;
+}
+
+.memory-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.memory-empty {
+  padding: 28px;
+  text-align: center;
+  color: #a2a8b7;
+}
+
+.companion-reset {
+  color: #f56c6c;
+  margin-left: 8px;
 }
 
 .slider-hint {

@@ -194,6 +194,7 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
         if (updatedRows < 0 || updatedRows > 1) {
             throw new RenException("智能体快照恢复失败");
         }
+        restoreCompanionBinding(agentId, currentAgent.getUserId(), restoreData);
 
         restoreFunctions(agentId, restoreData.getFunctions());
         restoreContextProviders(agentId, restoreData.getContextProviders());
@@ -346,6 +347,10 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
         data.setChatHistoryConf(agent.getChatHistoryConf());
         data.setSystemPrompt(agent.getSystemPrompt());
         data.setSummaryMemory(agent.getSummaryMemory());
+        data.setCompanionEnabled(agent.getCompanionEnabled());
+        data.setPersonaId(agent.getPersonaId());
+        data.setPersonaVersion(agent.getPersonaVersion());
+        data.setCompanionOverlay(agent.getCompanionOverlay());
         data.setLangCode(agent.getLangCode());
         data.setLanguage(agent.getLanguage());
         data.setSort(agent.getSort());
@@ -590,15 +595,8 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
     }
 
     private void applyMemoryPolicy(AgentEntity agent) {
-        if (agent == null || StringUtils.isBlank(agent.getMemModelId())) {
-            return;
-        }
-        if (Constant.MEMORY_NO_MEM.equals(agent.getMemModelId())) {
-            agentChatHistoryService.deleteByAgentId(agent.getId(), true, true);
-            agent.setSummaryMemory("");
-        } else if (Constant.MEMORY_MEM_REPORT_ONLY.equals(agent.getMemModelId())) {
-            agent.setSummaryMemory("");
-        }
+        // Restoring a configuration snapshot must never delete user history as a
+        // side effect. The selected provider controls future behavior only.
     }
 
     private void restoreFunctions(String agentId, List<AgentUpdateDTO.FunctionInfo> functions) {
@@ -614,6 +612,19 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
             return mapping;
         }).toList();
         agentPluginMappingService.saveBatch(mappings, IRepository.DEFAULT_BATCH_SIZE);
+    }
+
+    private void restoreCompanionBinding(String agentId, Long userId, AgentSnapshotDataDTO data) {
+        if (data == null || data.getCompanionEnabled() == null) {
+            return;
+        }
+        agentDao.upsertCompanionBinding(
+                agentId,
+                data.getCompanionEnabled(),
+                StringUtils.defaultString(data.getPersonaId()),
+                StringUtils.defaultString(data.getPersonaVersion()),
+                StringUtils.defaultIfBlank(data.getCompanionOverlay(), "{}"),
+                userId);
     }
 
     private void restoreContextProviders(String agentId,
@@ -776,6 +787,14 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
             return null;
         }
         AgentSnapshotDataDTO copy = parseSnapshotData(JsonUtils.toJsonString(target));
+        // Snapshots written before Companion fields were introduced must not silently
+        // detach the current Persona when they are restored.
+        if (copy.getCompanionEnabled() == null && current != null) {
+            copy.setCompanionEnabled(current.getCompanionEnabled());
+            copy.setPersonaId(current.getPersonaId());
+            copy.setPersonaVersion(current.getPersonaVersion());
+            copy.setCompanionOverlay(current.getCompanionOverlay());
+        }
         Map<String, AgentUpdateDTO.FunctionInfo> currentFunctions = nullToEmpty(current == null ? null : current.getFunctions())
                 .stream()
                 .filter(function -> function != null && StringUtils.isNotBlank(function.getPluginId()))

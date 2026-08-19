@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="xiaozhi.modules.config.dao.CompanionRuntimeDao">
+    <select id="countRuntimeIdentity" resultType="java.lang.Integer">
+        SELECT COUNT(*)
+        FROM ai_agent a
+        JOIN ai_agent_persona ap ON ap.agent_id = a.id
+        WHERE a.id = #{agentId}
+          AND CAST(a.user_id AS CHAR) = #{userId}
+          AND ap.persona_source_id = #{personaId}
+    </select>
+
+    <select id="lockAgent" resultType="java.lang.String">
+        SELECT id FROM ai_agent WHERE id = #{agentId} FOR UPDATE
+    </select>
+
+    <select id="selectState" resultType="java.util.HashMap">
+        SELECT emotion_json AS emotionJson,
+               relationship_json AS relationshipJson,
+               revision
+        FROM ai_companion_state
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </select>
+
+    <insert id="ensureState">
+        INSERT IGNORE INTO ai_companion_state(user_id, agent_id, persona_id, emotion_json, relationship_json, revision)
+        VALUES(#{userId}, #{agentId}, #{personaId}, JSON_OBJECT(), JSON_OBJECT(), 0)
+    </insert>
+
+    <select id="selectRevisionForUpdate" resultType="java.lang.Long">
+        SELECT revision
+        FROM ai_companion_state
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+        FOR UPDATE
+    </select>
+
+    <update id="updateState">
+        UPDATE ai_companion_state
+        SET emotion_json = #{emotionJson},
+            relationship_json = #{relationshipJson},
+            revision = #{revision},
+            updated_at = NOW()
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+          AND persona_id = #{personaId}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <select id="countTurn" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM ai_companion_turn WHERE turn_id = #{turnId}
+    </select>
+
+    <insert id="insertTurn">
+        INSERT INTO ai_companion_turn(turn_id, user_id, agent_id, persona_id, state_revision)
+        VALUES(#{turnId}, #{userId}, #{agentId}, #{personaId}, #{revision})
+    </insert>
+
+    <insert id="insertEvent">
+        INSERT IGNORE INTO ai_companion_event(
+            turn_id, user_id, agent_id, persona_id, event_type, payload_json, payload_hash, confidence
+        ) VALUES(
+            #{turnId}, #{userId}, #{agentId}, #{personaId}, #{eventType}, #{payloadJson}, #{payloadHash}, #{confidence}
+        )
+    </insert>
+
+    <insert id="upsertMemory">
+        INSERT INTO ai_companion_memory(
+            user_id, agent_id, persona_id, memory_type, subject_key, content, normalized_hash,
+            importance, confidence, sensitivity, status, occurred_at, expires_at, source_turn_id
+        ) VALUES(
+            #{userId}, #{agentId}, #{personaId}, #{memoryType}, #{subjectKey}, #{content}, #{normalizedHash},
+            #{importance}, #{confidence}, #{sensitivity}, 'active', #{occurredAt}, #{expiresAt}, #{sourceTurnId}
+        )
+        ON DUPLICATE KEY UPDATE
+            importance = GREATEST(importance, VALUES(importance)),
+            confidence = GREATEST(confidence, VALUES(confidence)),
+            subject_key = COALESCE(VALUES(subject_key), subject_key),
+            status = 'active',
+            expires_at = VALUES(expires_at),
+            last_accessed_at = NOW()
+    </insert>
+
+    <update id="supersedeMemories">
+        UPDATE ai_companion_memory
+        SET status = 'superseded'
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+          AND persona_id = #{personaId}
+          AND memory_type = #{memoryType}
+          AND subject_key = #{subjectKey}
+          AND NOT normalized_hash = #{normalizedHash}
+          AND status = 'active'
+    </update>
+
+    <select id="selectMemoryId" resultType="java.lang.Long">
+        SELECT id
+        FROM ai_companion_memory
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+          AND persona_id = #{personaId}
+          AND memory_type = #{memoryType}
+          AND normalized_hash = #{normalizedHash}
+        LIMIT 1
+    </select>
+
+    <update id="linkSupersededMemories">
+        UPDATE ai_companion_memory
+        SET superseded_by = #{supersededBy}
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+          AND persona_id = #{personaId}
+          AND memory_type = #{memoryType}
+          AND subject_key = #{subjectKey}
+          AND NOT normalized_hash = #{normalizedHash}
+          AND status = 'superseded'
+          AND superseded_by IS NULL
+    </update>
+
+    <select id="selectMemories" resultType="java.util.HashMap">
+        SELECT id,
+               memory_type AS memoryType,
+               subject_key AS subjectKey,
+               content,
+               importance,
+               confidence,
+               sensitivity,
+               status,
+               occurred_at AS occurredAt,
+               created_at AS createdAt,
+               expires_at AS expiresAt
+        FROM ai_companion_memory
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+          AND persona_id = #{personaId}
+          AND sensitivity IN ('public', 'personal')
+          AND status = 'active'
+          AND (expires_at IS NULL OR expires_at &gt; NOW())
+        ORDER BY importance DESC, created_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectManagedMemories" resultType="java.util.HashMap">
+        SELECT id,
+               memory_type AS memoryType,
+               subject_key AS subjectKey,
+               content,
+               importance,
+               confidence,
+               sensitivity,
+               status,
+               occurred_at AS occurredAt,
+               created_at AS createdAt,
+               last_accessed_at AS lastAccessedAt,
+               expires_at AS expiresAt
+        FROM ai_companion_memory
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+        ORDER BY FIELD(status, 'active', 'superseded'), importance DESC, created_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="updateMemory">
+        UPDATE ai_companion_memory
+        SET content = #{content},
+            normalized_hash = #{normalizedHash},
+            importance = #{importance},
+            expires_at = #{expiresAt},
+            last_accessed_at = NOW()
+        WHERE id = #{id} AND user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </update>
+
+    <delete id="deleteMemory">
+        DELETE FROM ai_companion_memory
+        WHERE id = #{id} AND user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </delete>
+
+    <update id="touchMemories">
+        UPDATE ai_companion_memory SET last_accessed_at = NOW() WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+    <select id="countMemories" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM ai_companion_memory
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+          AND status = 'active' AND (expires_at IS NULL OR expires_at &gt; NOW())
+    </select>
+
+    <delete id="deleteMemories">
+        DELETE FROM ai_companion_memory
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </delete>
+
+    <delete id="deleteEvents">
+        DELETE FROM ai_companion_event
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </delete>
+
+    <delete id="deleteTurns">
+        DELETE FROM ai_companion_turn
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </delete>
+
+    <delete id="deleteState">
+        DELETE FROM ai_companion_state
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </delete>
+
+    <insert id="insertAudit">
+        INSERT INTO ai_companion_audit(operator_user_id, action, target_type, target_id, details_json)
+        VALUES(#{operatorUserId}, #{action}, #{targetType}, #{targetId}, #{detailsJson})
+    </insert>
+</mapper>

@@ -220,6 +220,8 @@ public class ConfigServiceImpl implements ConfigService {
         // 获取声纹信息
         buildVoiceprintConfig(agent.getId(), result);
 
+        buildCompanionConfig(agent, result);
+
         // 构建模块配置
         buildModuleConfig(
                 agent.getAgentName(),
@@ -245,6 +247,32 @@ public class ConfigServiceImpl implements ConfigService {
                 true);
 
         return result;
+    }
+
+    private void buildCompanionConfig(AgentEntity agent, Map<String, Object> result) {
+        Map<String, Object> companion = new HashMap<>();
+        boolean enabled = Boolean.TRUE.equals(agent.getCompanionEnabled())
+                && agent.getUserId() != null
+                && StringUtils.isNotBlank(agent.getPersonaId());
+        companion.put("enabled", enabled);
+        companion.put("agent_id", agent.getId());
+        if (agent.getUserId() != null) {
+            companion.put("owner_user_id", String.valueOf(agent.getUserId()));
+        }
+        if (StringUtils.isNotBlank(agent.getPersonaId())) {
+            companion.put("persona_id", agent.getPersonaId());
+        }
+        if (StringUtils.isNotBlank(agent.getPersonaVersion())) {
+            companion.put("persona_version", agent.getPersonaVersion());
+        }
+        if (StringUtils.isNotBlank(agent.getCompanionOverlay())) {
+            try {
+                companion.put("overlay", JsonUtils.parseMap(agent.getCompanionOverlay()));
+            } catch (Exception ignored) {
+                companion.put("overlay", new HashMap<>());
+            }
+        }
+        result.put("companion", companion);
     }
 
     @Override

@@ -1,4 +1,7 @@
+import en from './en'
+
 export default {
+  ...en,
   // Login page related prompt text
   'login.requiredUsername': 'Benutzername darf nicht leer sein',
   'login.requiredPassword': 'Passwort darf nicht leer sein',
@@ -834,10 +837,10 @@ export default {
   'roleConfig.snapshotHistory': 'Versionsverlauf',
   'roleConfig.currentVersion': 'Aktuelle Version {version}',
   'roleConfig.functionName': 'Funktionsname',
-  'roleConfig.reset': 'Zurücksetzen',
+  'roleConfig.reset': 'Nicht gespeicherte Änderungen verwerfen',
   'roleConfig.agentName': 'Spitzname',
   'roleConfig.roleTemplate': 'Vorlage',
-  'roleConfig.roleIntroduction': 'Einführung',
+  'roleConfig.roleIntroduction': 'Grundlegende Systemregeln',
   'roleConfig.languageCode': 'Sprachcode',
   'roleConfig.interactionLanguage': 'Interaktionssprache',
   'agentSnapshot.title': 'Versionsverlauf',
@@ -960,8 +963,8 @@ export default {
   'roleConfig.slm': 'Kleines Sprachmodell (SLM)',
   'roleConfig.vllm': 'VLLM',
   'roleConfig.tts': 'TTS',
-  'roleConfig.memoryHis': 'Speicher',
-  'roleConfig.memory': 'Speicher',
+  'roleConfig.memoryHis': 'Lokale Kurzzeit-Zusammenfassung',
+  'roleConfig.memory': 'Bisheriger Gesprächsspeicher',
   'roleConfig.intent': 'Intent',
   'roleConfig.language': 'Sprache auswählen',
   'roleConfig.selectLanguage': 'Bitte Sprache auswählen',

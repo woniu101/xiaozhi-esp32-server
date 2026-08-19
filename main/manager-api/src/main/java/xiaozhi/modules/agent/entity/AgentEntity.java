@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.util.Date;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -82,6 +83,22 @@ public class AgentEntity {
 
     @Schema(description = "交互语种")
     private String language;
+
+    @TableField(exist = false)
+    @Schema(description = "是否启用 Companion Core")
+    private Boolean companionEnabled;
+
+    @TableField(exist = false)
+    @Schema(description = "绑定的 Persona ID")
+    private String personaId;
+
+    @TableField(exist = false)
+    @Schema(description = "绑定的 Persona 版本；为空时使用已发布版本")
+    private String personaVersion;
+
+    @TableField(exist = false)
+    @Schema(description = "Companion Overlay JSON")
+    private String companionOverlay;
 
     @Schema(description = "排序")
     private Integer sort;

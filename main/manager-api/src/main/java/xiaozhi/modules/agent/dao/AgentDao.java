@@ -52,4 +52,13 @@ public interface AgentDao extends BaseDao<AgentEntity> {
      * @return 受影响行数
      */
     int updateSnapshotFields(@Param("agent") AgentEntity agent);
+
+    /** 创建或部分更新智能体的 Companion Persona 绑定。 */
+    int upsertCompanionBinding(
+            @Param("agentId") String agentId,
+            @Param("enabled") Boolean enabled,
+            @Param("personaId") String personaId,
+            @Param("personaVersion") String personaVersion,
+            @Param("companionOverlay") String companionOverlay,
+            @Param("userId") Long userId);
 }

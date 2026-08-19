@@ -30,6 +30,10 @@
         <result column="summaryMemory" property="summaryMemory"/>
         <result column="langCode" property="langCode"/>
         <result column="language" property="language"/>
+        <result column="companionEnabled" property="companionEnabled"/>
+        <result column="personaId" property="personaId"/>
+        <result column="personaVersion" property="personaVersion"/>
+        <result column="companionOverlay" property="companionOverlay"/>
         <result column="sort" property="sort"/>
         <result column="creator" property="creator"/>
         <result column="createdAt" property="createdAt"/>
@@ -67,6 +71,10 @@
                a.summary_memory    AS summaryMemory,
                a.lang_code         AS langCode,
                a.language          AS language,
+               COALESCE(p.enabled, 0) AS companionEnabled,
+               p.persona_source_id AS personaId,
+               p.published_version AS personaVersion,
+               p.companion_overlay_json AS companionOverlay,
                a.sort,
                a.creator,
                a.created_at        AS createdAt,
@@ -78,6 +86,7 @@
                f.param_info        AS paramInfo
         FROM ai_agent a
         LEFT JOIN ai_agent_plugin_mapping f ON f.agent_id = a.id
+        LEFT JOIN ai_agent_persona p ON p.agent_id = a.id
         WHERE a.id = #{agentId}
         ORDER BY f.id ASC
     </select>
@@ -116,5 +125,28 @@
             updated_at = #{agent.updatedAt,jdbcType=TIMESTAMP}
         WHERE id = #{agent.id}
     </update>
+
+    <insert id="upsertCompanionBinding">
+        INSERT INTO ai_agent_persona (
+            agent_id, persona_source_id, published_version, enabled,
+            companion_overlay_json, creator, created_at, updater, updated_at
+        ) VALUES (
+            #{agentId}, NULLIF(#{personaId}, ''), NULLIF(#{personaVersion}, ''), COALESCE(#{enabled}, 0),
+            #{companionOverlay}, #{userId}, NOW(), #{userId}, NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            persona_source_id = CASE
+                WHEN #{personaId} IS NULL THEN persona_source_id
+                ELSE NULLIF(#{personaId}, '')
+            END,
+            published_version = CASE
+                WHEN #{personaVersion} IS NULL THEN published_version
+                ELSE NULLIF(#{personaVersion}, '')
+            END,
+            enabled = COALESCE(#{enabled}, enabled),
+            companion_overlay_json = COALESCE(#{companionOverlay}, companion_overlay_json),
+            updater = #{userId},
+            updated_at = NOW()
+    </insert>
 
 </mapper>

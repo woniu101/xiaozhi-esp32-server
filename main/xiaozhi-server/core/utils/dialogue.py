@@ -93,7 +93,7 @@ class Dialogue:
 
     def get_llm_dialogue_with_memory(
             self, memory_str: str = None, voiceprint_config: dict = None,
-            current_speaker: str = None,
+            current_speaker: str = None, companion_context=None,
     ) -> List[Dict[str, str]]:
         # 构建对话
         dialogue = []
@@ -144,6 +144,20 @@ class Dialogue:
                     full_prompt += speakers_info
             except:
                 pass
+
+            # Companion 上下文只注入当前 LLM 请求，不写回永久 system message。
+            # 这样运行时情绪、关系和相关记忆不会污染提示词缓存或后续轮次。
+            if companion_context:
+                try:
+                    rendered_context = (
+                        companion_context.render()
+                        if hasattr(companion_context, "render")
+                        else str(companion_context)
+                    ).strip()
+                    if rendered_context:
+                        full_prompt += f"\n{rendered_context}"
+                except Exception:
+                    pass
 
             dialogue.append({"role": "system", "content": full_prompt})
 

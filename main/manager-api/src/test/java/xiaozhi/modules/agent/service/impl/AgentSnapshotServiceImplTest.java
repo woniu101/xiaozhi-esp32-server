@@ -1080,7 +1080,7 @@ class AgentSnapshotServiceImplTest {
         CorrectWordFileService correctWordFileService = mock(CorrectWordFileService.class);
         AgentSnapshotService snapshotService = mock(AgentSnapshotService.class);
         AgentServiceImpl service = new AgentServiceImpl(agentDao, null, null, null, null, null, null, null,
-                null, null, contextProviderService, null, correctWordFileService, snapshotService);
+                null, null, contextProviderService, null, correctWordFileService, snapshotService, null);
         ReflectionTestUtils.setField(service, "baseDao", agentDao);
 
         String agentId = "agent-id";
@@ -1114,7 +1114,7 @@ class AgentSnapshotServiceImplTest {
         CorrectWordFileService correctWordFileService = mock(CorrectWordFileService.class);
         AgentSnapshotService snapshotService = mock(AgentSnapshotService.class);
         AgentServiceImpl service = new AgentServiceImpl(agentDao, null, null, null, null, null, null, null,
-                null, null, contextProviderService, null, correctWordFileService, snapshotService);
+                null, null, contextProviderService, null, correctWordFileService, snapshotService, null);
         ReflectionTestUtils.setField(service, "baseDao", agentDao);
 
         String agentId = "agent-id";
@@ -1150,7 +1150,7 @@ class AgentSnapshotServiceImplTest {
         ModelProviderService providerService = mock(ModelProviderService.class);
         AgentSnapshotService snapshotService = mock(AgentSnapshotService.class);
         AgentServiceImpl service = new AgentServiceImpl(agentDao, null, timbreService, null, null, null,
-                pluginMappingService, null, templateService, providerService, null, null, null, snapshotService);
+                pluginMappingService, null, templateService, providerService, null, null, null, snapshotService, null);
         ReflectionTestUtils.setField(service, "baseDao", agentDao);
 
         AgentTemplateEntity template = new AgentTemplateEntity();

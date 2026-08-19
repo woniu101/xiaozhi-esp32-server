@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xiaozhi.example/schemas/cyber-persona-v1.json",
+  "title": "Cyber PersonaSpec v1",
+  "type": "object",
+  "required": ["schema_version", "id", "display_name", "source", "identity"],
+  "properties": {
+    "schema_version": {"const": "cyber-persona/v1"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "display_name": {"type": "string", "minLength": 1, "maxLength": 100},
+    "source": {
+      "type": "object",
+      "required": ["adapter", "family", "artifact_sha256"],
+      "properties": {
+        "adapter": {"type": "string"},
+        "family": {"type": "string"},
+        "artifact_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}
+      },
+      "additionalProperties": true
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "summary": {"type": "string"},
+        "public_role": {"type": "string"},
+        "fictionalization_notice": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "core_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "rule", "priority"],
+        "properties": {
+          "id": {"type": "string"},
+          "rule": {"type": "string", "minLength": 1},
+          "priority": {"type": "integer"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": true
+      }
+    },
+    "expression": {"type": "object"},
+    "emotional_logic": {"type": "object"},
+    "conflict_repair": {"type": "object"},
+    "mental_models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "description"],
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "decision_heuristics": {"type": "array"},
+    "relationship_policy": {"type": "object"},
+    "examples": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["scene", "user", "assistant"],
+        "properties": {
+          "scene": {"type": "string"},
+          "user": {"type": "string"},
+          "assistant": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "limitations": {"type": "array"},
+    "quality": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -29,6 +29,10 @@ public class AgentSnapshotDataDTO implements Serializable {
     private Integer chatHistoryConf;
     private String systemPrompt;
     private String summaryMemory;
+    private Boolean companionEnabled;
+    private String personaId;
+    private String personaVersion;
+    private String companionOverlay;
     private String langCode;
     private String language;
     private Integer sort;

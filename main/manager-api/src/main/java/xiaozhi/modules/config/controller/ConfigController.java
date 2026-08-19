@@ -1,6 +1,7 @@
 package xiaozhi.modules.config.controller;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -15,7 +16,13 @@ import xiaozhi.common.utils.Result;
 import xiaozhi.common.validator.ValidatorUtils;
 import xiaozhi.modules.config.dto.AgentModelsDTO;
 import xiaozhi.modules.config.dto.CorrectWordsDTO;
+import xiaozhi.modules.config.dto.CompanionRuntimeDTO.CommitRequest;
+import xiaozhi.modules.config.dto.CompanionRuntimeDTO.IdentityRequest;
+import xiaozhi.modules.config.dto.CompanionRuntimeDTO.MemorySearchRequest;
+import xiaozhi.modules.config.service.CompanionRuntimeService;
 import xiaozhi.modules.config.service.ConfigService;
+import xiaozhi.modules.persona.dto.PersonaRuntimeDTO.ResolveRequest;
+import xiaozhi.modules.persona.service.PersonaService;
 
 /**
  * xiaozhi-server 配置获取
@@ -28,6 +35,8 @@ import xiaozhi.modules.config.service.ConfigService;
 @AllArgsConstructor
 public class ConfigController {
     private final ConfigService configService;
+    private final CompanionRuntimeService companionRuntimeService;
+    private final PersonaService personaService;
 
     @PostMapping("server-base")
     @Operation(summary = "服务端获取配置接口")
@@ -51,5 +60,33 @@ public class ConfigController {
         ValidatorUtils.validateEntity(dto);
         List<String> list = configService.getCorrectWords(dto.getMacAddress());
         return new Result<Object>().ok(list);
+    }
+
+    @PostMapping("companion/state")
+    @Operation(summary = "服务端读取 Companion 状态")
+    public Result<Map<String, Object>> getCompanionState(@Valid @RequestBody IdentityRequest dto) {
+        return new Result<Map<String, Object>>().ok(
+                companionRuntimeService.getState(dto.getUserId(), dto.getAgentId(), dto.getPersonaId()));
+    }
+
+    @PostMapping("companion/commit")
+    @Operation(summary = "服务端原子提交 Companion 轮次")
+    public Result<String> commitCompanionTurn(@Valid @RequestBody CommitRequest dto) {
+        return new Result<String>().ok(companionRuntimeService.commit(dto));
+    }
+
+    @PostMapping("companion/memories/search")
+    @Operation(summary = "服务端读取 Companion 候选记忆")
+    public Result<List<Map<String, Object>>> searchCompanionMemories(
+            @Valid @RequestBody MemorySearchRequest dto) {
+        return new Result<List<Map<String, Object>>>().ok(
+                companionRuntimeService.getMemories(
+                        dto.getUserId(), dto.getAgentId(), dto.getPersonaId(), dto.getLimit()));
+    }
+
+    @PostMapping("companion/persona/resolve")
+    @Operation(summary = "服务端解析已绑定并发布的 Persona")
+    public Result<Map<String, Object>> resolveCompanionPersona(@Valid @RequestBody ResolveRequest dto) {
+        return new Result<Map<String, Object>>().ok(personaService.resolveRuntime(dto));
     }
 }

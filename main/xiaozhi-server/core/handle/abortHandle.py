@@ -11,6 +11,8 @@ async def handleAbortMessage(conn: "ConnectionHandler"):
     # 设置成打断状态，会自动打断llm、tts任务
     conn.close_after_chat = False
     conn.client_abort = True
+    if getattr(conn, "active_turn_recorder", None) is not None:
+        conn.active_turn_recorder.mark_aborted()
     conn.clear_queues()
     # 打断客户端说话状态
     await conn.websocket.send(

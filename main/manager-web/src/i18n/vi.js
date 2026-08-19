@@ -1,4 +1,7 @@
+import en from './en'
+
 export default {
+  ...en,
   // Login page related prompt text
   'login.requiredUsername': 'Tên đăng nhập không được để trống',
   'login.requiredPassword': 'Mật khẩu không được để trống',
@@ -834,10 +837,10 @@ export default {
   'roleConfig.snapshotHistory': 'Lịch sử phiên bản',
   'roleConfig.currentVersion': 'Phiên bản hiện tại {version}',
   'roleConfig.functionName': 'Tên chức năng',
-  'roleConfig.reset': 'Đặt lại',
+  'roleConfig.reset': 'Bỏ thay đổi chưa lưu',
   'roleConfig.agentName': 'Biệt danh',
   'roleConfig.roleTemplate': 'Mẫu',
-  'roleConfig.roleIntroduction': 'Giới thiệu',
+  'roleConfig.roleIntroduction': 'Quy tắc hệ thống cơ bản',
   'roleConfig.languageCode': 'Mã ngôn ngữ',
   'roleConfig.interactionLanguage': 'Ngôn ngữ tương tác',
   'agentSnapshot.title': 'Lịch sử phiên bản',
@@ -960,8 +963,8 @@ export default {
   'roleConfig.slm': 'Mô hình ngôn ngữ nhỏ',
   'roleConfig.vllm': 'Mô hình thị giác',
   'roleConfig.tts': 'Văn bản thành giọng nói',
-  'roleConfig.memoryHis': 'Bộ nhớ',
-  'roleConfig.memory': 'Mô hình bộ nhớ',
+  'roleConfig.memoryHis': 'Tóm tắt bộ nhớ ngắn cục bộ',
+  'roleConfig.memory': 'Bộ nhớ hội thoại cũ',
   'roleConfig.intent': 'Nhận dạng ý định',
   'roleConfig.language': 'Chọn ngôn ngữ',
   'roleConfig.selectLanguage': 'Vui lòng chọn ngôn ngữ',

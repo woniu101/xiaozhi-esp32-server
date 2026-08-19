@@ -1,7 +1,15 @@
 # 生产镜像，仅包含应用代码
 FROM ghcr.io/xinnan-tech/xiaozhi-esp32-server:server-base
 
+ARG GIT_COMMIT=dev
+LABEL org.opencontainers.image.revision=$GIT_COMMIT
+ENV XIAOZHI_GIT_COMMIT=$GIT_COMMIT
+
 COPY main/xiaozhi-server .
+RUN pip install --no-cache-dir -r requirements.txt
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "import socket;s=socket.create_connection(('127.0.0.1',8003),3);s.close()" || exit 1
 
 # 启动应用
 CMD ["python", "app.py"]

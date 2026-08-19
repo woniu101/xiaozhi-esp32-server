@@ -85,6 +85,18 @@ public class AgentUpdateDTO implements Serializable {
     @Schema(description = "交互语种", example = "中文", nullable = true)
     private String language;
 
+    @Schema(description = "是否启用 Companion Core", nullable = true)
+    private Boolean companionEnabled;
+
+    @Schema(description = "绑定的 Persona ID", nullable = true)
+    private String personaId;
+
+    @Schema(description = "Persona 版本；留空使用已发布版本", nullable = true)
+    private String personaVersion;
+
+    @Schema(description = "Companion Overlay JSON", nullable = true)
+    private String companionOverlay;
+
     @Schema(description = "排序", example = "1", nullable = true)
     private Integer sort;
 

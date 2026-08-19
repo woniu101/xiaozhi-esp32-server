@@ -56,6 +56,8 @@ import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.agent.vo.AgentChatHistoryUserVO;
 import xiaozhi.modules.agent.vo.AgentInfoVO;
 import xiaozhi.modules.security.user.SecurityUser;
+import xiaozhi.modules.config.service.CompanionRuntimeService;
+import xiaozhi.modules.config.dto.CompanionRuntimeDTO.MemoryUpdateRequest;
 
 @Tag(name = "智能体管理")
 @AllArgsConstructor
@@ -71,6 +73,7 @@ public class AgentController {
     private final AgentChatSummaryService agentChatSummaryService;
     private final RedisUtils redisUtils;
     private final AgentTagService agentTagService;
+    private final CompanionRuntimeService companionRuntimeService;
 
     private void requireAgentPermission(String agentId) {
         if (!agentService.checkAgentPermission(agentId, SecurityUser.getUserId())) {
@@ -141,14 +144,14 @@ public class AgentController {
     @PutMapping("/saveMemory/{macAddress}")
     @Operation(summary = "根据设备id更新智能体")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> updateByDeviceId(@PathVariable String macAddress, @RequestBody @Valid AgentMemoryDTO dto) {
+    public Result<Void> updateByDeviceId(@PathVariable("macAddress") String macAddress, @RequestBody @Valid AgentMemoryDTO dto) {
         agentService.updateAgentMemoryByDeviceMacAddress(macAddress, dto, SecurityUser.getUserId());
         return new Result<Void>().ok(null);
     }
 
     @PostMapping("/chat-summary/{sessionId}/save")
     @Operation(summary = "根据会话ID生成聊天记录总结并保存（异步执行）")
-    public Result<Void> generateAndSaveChatSummary(@PathVariable String sessionId) {
+    public Result<Void> generateAndSaveChatSummary(@PathVariable("sessionId") String sessionId) {
         requireSessionAgent(sessionId);
         try {
             // 异步执行总结生成任务，立即返回成功响应
@@ -170,7 +173,7 @@ public class AgentController {
 
     @PostMapping("/chat-title/{sessionId}/generate")
     @Operation(summary = "根据会话ID生成聊天标题")
-    public Result<Void> generateAndSaveChatTitle(@PathVariable String sessionId) {
+    public Result<Void> generateAndSaveChatTitle(@PathVariable("sessionId") String sessionId) {
         requireSessionAgent(sessionId);
         agentChatSummaryService.generateAndSaveChatTitle(sessionId);
         return new Result<Void>().ok(null);
@@ -179,15 +182,119 @@ public class AgentController {
     @PutMapping("/{id}")
     @Operation(summary = "更新智能体")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> update(@PathVariable String id, @RequestBody @Valid AgentUpdateDTO dto) {
+    public Result<Void> update(@PathVariable("id") String id, @RequestBody @Valid AgentUpdateDTO dto) {
         agentService.updateAgentById(id, dto, SecurityUser.getUserId());
         return new Result<>();
+    }
+
+    @GetMapping("/{id}/companion/summary")
+    @Operation(summary = "获取 Companion 非敏感状态摘要")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Map<String, Object>> getCompanionSummary(@PathVariable("id") String id) {
+        requireAgentPermission(id);
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isBlank(agent.getPersonaId())) {
+            return new Result<Map<String, Object>>().ok(Map.of(
+                    "stage", "familiar",
+                    "meaningfulTurns", 0,
+                    "sharedEventCount", 0,
+                    "revision", 0,
+                    "memoryCount", 0,
+                    "personaId", ""));
+        }
+        return new Result<Map<String, Object>>().ok(
+                companionRuntimeService.getSummary(
+                        String.valueOf(agent.getUserId()), id, agent.getPersonaId()));
+    }
+
+    @GetMapping("/{id}/companion/memories")
+    @Operation(summary = "查看当前 Persona 的 Companion 记忆")
+    @RequiresPermissions("sys:role:normal")
+    public Result<List<Map<String, Object>>> getCompanionMemories(
+            @PathVariable("id") String id,
+            @RequestParam(value = "limit", defaultValue = "200") int limit) {
+        requireAgentPermission(id);
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isBlank(agent.getPersonaId())) {
+            return new Result<List<Map<String, Object>>>().ok(List.of());
+        }
+        return new Result<List<Map<String, Object>>>().ok(
+                companionRuntimeService.getManagedMemories(
+                        String.valueOf(agent.getUserId()), id, agent.getPersonaId(), limit));
+    }
+
+    @PutMapping("/{id}/companion/memories/{memoryId}")
+    @Operation(summary = "编辑当前 Persona 的 Companion 记忆")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> updateCompanionMemory(
+            @PathVariable("id") String id,
+            @PathVariable("memoryId") Long memoryId,
+            @RequestBody @Valid MemoryUpdateRequest request) {
+        requireAgentPermission(id);
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isBlank(agent.getPersonaId())) {
+            throw new RenException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        companionRuntimeService.updateMemory(
+                String.valueOf(agent.getUserId()), id, agent.getPersonaId(), memoryId,
+                request, SecurityUser.getUserId());
+        return new Result<Void>().ok(null);
+    }
+
+    @DeleteMapping("/{id}/companion/memories/{memoryId}")
+    @Operation(summary = "删除当前 Persona 的 Companion 记忆")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> deleteCompanionMemory(
+            @PathVariable("id") String id,
+            @PathVariable("memoryId") Long memoryId) {
+        requireAgentPermission(id);
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isBlank(agent.getPersonaId())) {
+            throw new RenException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+        companionRuntimeService.deleteMemory(
+                String.valueOf(agent.getUserId()), id, agent.getPersonaId(), memoryId,
+                SecurityUser.getUserId());
+        return new Result<Void>().ok(null);
+    }
+
+    @DeleteMapping("/{id}/companion/state")
+    @Operation(summary = "重置 Companion 状态和记忆")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> resetCompanionState(
+            @PathVariable("id") String id,
+            @RequestParam("confirmAgentId") String confirmAgentId) {
+        requireAgentPermission(id);
+        if (!id.equals(confirmAgentId)) {
+            throw new RenException(ErrorCode.PARAMS_GET_ERROR);
+        }
+        Long operatorUserId = SecurityUser.getUserId();
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isNotBlank(agent.getPersonaId())) {
+            companionRuntimeService.reset(
+                    String.valueOf(agent.getUserId()), id, agent.getPersonaId(), operatorUserId);
+        }
+        return new Result<Void>().ok(null);
+    }
+
+    @DeleteMapping("/{id}/legacy-memory")
+    @Operation(summary = "显式清除旧版记忆摘要和聊天记录")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> clearLegacyMemory(
+            @PathVariable("id") String id,
+            @RequestParam("confirmAgentId") String confirmAgentId) {
+        requireAgentPermission(id);
+        if (!id.equals(confirmAgentId)) {
+            throw new RenException(ErrorCode.PARAMS_GET_ERROR);
+        }
+        agentService.clearLegacyMemory(id, SecurityUser.getUserId());
+        return new Result<Void>().ok(null);
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "删除智能体")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> delete(@PathVariable String id) {
+    public Result<Void> delete(@PathVariable("id") String id) {
         agentService.deleteAgentById(id, SecurityUser.getUserId());
         return new Result<>();
     }
@@ -322,7 +429,7 @@ public class AgentController {
     @DeleteMapping("/tag/{id}")
     @Operation(summary = "删除标签")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> deleteTag(@PathVariable String id) {
+    public Result<Void> deleteTag(@PathVariable("id") String id) {
         agentTagService.deleteTag(id);
         return new Result<Void>().ok(null);
     }
@@ -330,7 +437,7 @@ public class AgentController {
     @GetMapping("/{id}/tags")
     @Operation(summary = "获取智能体的标签")
     @RequiresPermissions("sys:role:normal")
-    public Result<List<AgentTagDTO>> getAgentTags(@PathVariable String id) {
+    public Result<List<AgentTagDTO>> getAgentTags(@PathVariable("id") String id) {
         requireAgentPermission(id);
         List<AgentTagDTO> tags = agentTagService.getTagsByAgentId(id);
         return new Result<List<AgentTagDTO>>().ok(tags);
@@ -339,7 +446,7 @@ public class AgentController {
     @PutMapping("/{id}/tags")
     @Operation(summary = "保存智能体的标签")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> saveAgentTags(@PathVariable String id, @RequestBody Map<String, Object> params) {
+    public Result<Void> saveAgentTags(@PathVariable("id") String id, @RequestBody Map<String, Object> params) {
         requireAgentPermission(id);
         List<String> tagIds = JsonUtils.toList(params.get("tagIds"), String.class);
         List<String> tagNames = JsonUtils.toList(params.get("tagNames"), String.class);

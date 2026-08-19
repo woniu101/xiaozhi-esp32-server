@@ -60,6 +60,10 @@ async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
             conn.logger.bind(tag=TAG).debug("客户端启用了服务端AEC")
             conn.client_aec = True
 
+    # Capability negotiation: new clients opt in via features.companion_presentation;
+    # old clients keep receiving the legacy emoji message.
+    conn.welcome_msg.setdefault("features", {})["companion_presentation"] = True
+
     await conn.websocket.send(json.dumps(conn.welcome_msg))
 
 

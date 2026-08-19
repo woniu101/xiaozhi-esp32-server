@@ -129,6 +129,12 @@ public interface AgentService extends BaseService<AgentEntity> {
     void updateAgentMemoryByDeviceMacAddress(String macAddress, AgentMemoryDTO dto, Long userId);
 
     /**
+     * Explicitly clear legacy summary memory and reported chat history.
+     * Memory mode changes never call this method implicitly.
+     */
+    void clearLegacyMemory(String agentId, Long userId);
+
+    /**
      * 删除当前用户有权访问的智能体
      *
      * @param agentId 智能体ID

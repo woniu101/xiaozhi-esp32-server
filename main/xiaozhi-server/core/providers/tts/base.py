@@ -45,6 +45,9 @@ class TTSProviderBase(ABC):
         self.tts_audio_queue = queue.Queue()
         self.tts_audio_first_sentence = True
         self.before_stop_play_files = []
+        self.current_emotion_style = "neutral"
+        configured_style_map = config.get("emotion_style_map", {})
+        self.emotion_style_map = configured_style_map if isinstance(configured_style_map, dict) else {}
         self.report_on_last = False
         # sentence_id 到文本的映射，用于流式TTS获取正确的字幕文本
         self._sentence_text_map = {}
@@ -109,6 +112,15 @@ class TTSProviderBase(ABC):
         self.tts_stop_request = False
         self.processed_chars = 0
         self.is_first_sentence = True
+
+    def set_emotion_style(self, style: str) -> str:
+        """Set an abstract Companion style. Unsupported providers safely use neutral."""
+        allowed = {"neutral", "warm", "happy", "excited", "concerned", "soft", "apologetic", "restrained"}
+        self.current_emotion_style = style if style in allowed else "neutral"
+        return self.current_emotion_style
+
+    def provider_emotion_style(self):
+        return self.emotion_style_map.get(self.current_emotion_style)
 
     def generate_filename(self, extension=".wav"):
         return os.path.join(

@@ -1,0 +1,24 @@
+server:
+  ip: 0.0.0.0
+  port: 8000
+  http_port: 8003
+manager-api:
+  url: http://manager:8002/xiaozhi
+  secret: replace-with-the-manager-server.secret
+read_config_from_api: true
+prompt_template: agent-base-prompt.txt
+companion:
+  enabled: true
+  persona_admin_enabled: true
+  repository: manager-api
+  persona_registry_backend: manager-api
+  persona_cache_ttl_seconds: 600
+  persona_latest_ttl_seconds: 60
+  init_timeout_ms: 1500
+  context_timeout_ms: 500
+  artifact_max_upload_mb: 10
+  persona_judge:
+    enabled: false
+    base_url: ""
+    api_key: ""
+    model: ""

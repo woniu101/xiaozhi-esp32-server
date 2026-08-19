@@ -11,12 +11,32 @@ const locales = [
   { name: 'pt_BR', file: 'src/i18n/pt_BR.js' },
 ];
 
-function readLocale(locale) {
+function readLocale(locale, stack = new Set()) {
   const filePath = path.join(rootDir, locale.file);
+  if (stack.has(filePath)) {
+    throw new Error(`Circular i18n fallback import: ${filePath}`);
+  }
+  const nextStack = new Set(stack);
+  nextStack.add(filePath);
   const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
   const keys = [];
   const seen = new Map();
   const duplicates = [];
+  const imports = new Map();
+
+  lines.forEach((line) => {
+    const match = line.match(/^\s*import\s+([A-Za-z_$][\w$]*)\s+from\s+['"](\.\/.+?)['"];?\s*$/);
+    if (match) imports.set(match[1], match[2]);
+  });
+
+  lines.forEach((line) => {
+    const spread = line.match(/^\s*\.\.\.([A-Za-z_$][\w$]*)\s*,?\s*$/);
+    if (!spread || !imports.has(spread[1])) return;
+    const imported = imports.get(spread[1]);
+    const importedFile = path.relative(rootDir, path.resolve(path.dirname(filePath), `${imported}.js`));
+    const inherited = readLocale({ name: spread[1], file: importedFile }, nextStack);
+    keys.push(...inherited.keys);
+  });
 
   lines.forEach((line, index) => {
     const match = line.match(/^\s*['"]([^'"]+)['"]\s*:/);
@@ -56,7 +76,7 @@ function formatKeyList(keys) {
 }
 
 function main() {
-  const results = locales.map(readLocale);
+  const results = locales.map((locale) => readLocale(locale));
   const base = results.find((locale) => locale.name === 'zh_CN');
   const errors = [];
 

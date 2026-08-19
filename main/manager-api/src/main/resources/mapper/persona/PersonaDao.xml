@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="xiaozhi.modules.persona.dao.PersonaDao">
+    <select id="selectRuntimeVersion" resultType="java.util.LinkedHashMap">
+        SELECT s.id AS personaId,
+               v.version,
+               COALESCE(v.artifact_hash, s.artifact_hash) AS artifactHash,
+               v.compiler_version AS compilerVersion,
+               CAST(v.canonical_spec_json AS CHAR) AS canonicalSpec,
+               v.runtime_prompt AS runtimePrompt,
+               s.relationship_ceiling AS relationshipCeiling,
+               s.persona_kind AS personaKind
+        FROM ai_agent_persona ap
+        JOIN ai_persona_source s ON s.id = ap.persona_source_id
+        JOIN ai_persona_version v ON v.persona_source_id = s.id
+        WHERE ap.agent_id = #{agentId}
+          AND ap.enabled = 1
+          AND ap.persona_source_id = #{personaId}
+          AND s.archived = 0
+          AND v.status = 'published'
+          AND (
+              (#{version} IS NOT NULL AND #{version} != '' AND v.version = #{version})
+              OR
+              ((#{version} IS NULL OR #{version} = '') AND ap.published_version IS NOT NULL
+                  AND ap.published_version != '' AND v.version = ap.published_version)
+              OR
+              ((#{version} IS NULL OR #{version} = '')
+                  AND (ap.published_version IS NULL OR ap.published_version = '')
+                  AND (s.latest_published_version IS NULL OR s.latest_published_version = ''
+                       OR v.version = s.latest_published_version))
+          )
+        ORDER BY CASE WHEN v.version = s.latest_published_version THEN 0 ELSE 1 END,
+                 v.published_at DESC,
+                 v.created_at DESC
+        LIMIT 1
+    </select>
+
+    <select id="countBindableVersion" resultType="int">
+        SELECT COUNT(*)
+        FROM ai_persona_source s
+        JOIN ai_persona_version v ON v.persona_source_id = s.id
+        WHERE s.id = #{personaId}
+          AND s.archived = 0
+          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+          AND v.status = 'published'
+          AND (#{version} IS NULL OR #{version} = '' OR v.version = #{version})
+    </select>
+
+    <select id="selectBindableOptions" resultType="java.util.LinkedHashMap">
+        SELECT s.id AS personaId,
+               s.display_name AS displayName,
+               s.description,
+               s.avatar_path AS avatarPath,
+               s.persona_kind AS personaKind,
+               s.latest_published_version AS publishedVersion,
+               s.relationship_ceiling AS relationshipCeiling,
+               s.visibility
+        FROM ai_persona_source s
+        WHERE s.archived = 0
+          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+          AND EXISTS (
+              SELECT 1 FROM ai_persona_version v
+              WHERE v.persona_source_id = s.id AND v.status = 'published'
+          )
+        ORDER BY s.updated_at DESC, s.display_name ASC
+    </select>
+
+    <insert id="insertImportJob">
+        INSERT INTO ai_persona_import_job(
+            id, owner_user_id, source_type, source_url, source_ref,
+            artifact_path, status, progress, created_at, updated_at, expires_at
+        ) VALUES (
+            #{id}, #{ownerUserId}, #{sourceType}, #{sourceUrl}, #{sourceRef},
+            #{artifactPath}, #{status}, 0, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY)
+        )
+    </insert>
+
+    <select id="countRecentImports" resultType="int">
+        SELECT COUNT(*) FROM ai_persona_import_job
+        WHERE owner_user_id = #{ownerUserId} AND created_at &gt; DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    </select>
+
+    <select id="selectStalledImportJobs" resultType="java.util.LinkedHashMap">
+        SELECT id, status
+        FROM ai_persona_import_job
+        WHERE status IN ('queued', 'resolving_source', 'downloading', 'inspecting', 'compiling', 'validating')
+          AND updated_at &lt; DATE_SUB(NOW(), INTERVAL 2 MINUTE)
+          AND (expires_at IS NULL OR expires_at &gt; NOW())
+        ORDER BY updated_at ASC
+        LIMIT 20
+    </select>
+
+    <update id="claimStalledImportJob">
+        UPDATE ai_persona_import_job SET updated_at = NOW()
+        WHERE id = #{id}
+          AND status IN ('queued', 'resolving_source', 'downloading', 'inspecting', 'compiling', 'validating')
+          AND updated_at &lt; DATE_SUB(NOW(), INTERVAL 2 MINUTE)
+    </update>
+
+    <select id="selectImportJob" resultType="java.util.LinkedHashMap">
+        SELECT id,
+               owner_user_id AS ownerUserId,
+               source_type AS sourceType,
+               source_url AS sourceUrl,
+               source_ref AS sourceRef,
+               resolved_commit AS resolvedCommit,
+               artifact_hash AS artifactHash,
+               artifact_path AS artifactPath,
+               status,
+               progress,
+               CAST(inspection_json AS CHAR) AS inspectionJson,
+               CAST(compile_result_json AS CHAR) AS compileResultJson,
+               error_code AS errorCode,
+               error_message_safe AS errorMessage,
+               created_at AS createdAt,
+               updated_at AS updatedAt
+        FROM ai_persona_import_job
+        WHERE id = #{id} AND owner_user_id = #{ownerUserId}
+    </select>
+
+    <select id="selectImportJobForUpdate" resultType="java.util.LinkedHashMap">
+        SELECT id,
+               owner_user_id AS ownerUserId,
+               source_type AS sourceType,
+               source_url AS sourceUrl,
+               source_ref AS sourceRef,
+               resolved_commit AS resolvedCommit,
+               artifact_hash AS artifactHash,
+               artifact_path AS artifactPath,
+               status,
+               progress,
+               CAST(inspection_json AS CHAR) AS inspectionJson,
+               CAST(compile_result_json AS CHAR) AS compileResultJson
+        FROM ai_persona_import_job
+        WHERE id = #{id}
+        FOR UPDATE
+    </select>
+
+    <update id="updateImportJob">
+        UPDATE ai_persona_import_job
+        SET status = COALESCE(#{status}, status),
+            progress = COALESCE(#{progress}, progress),
+            resolved_commit = COALESCE(#{resolvedCommit}, resolved_commit),
+            artifact_hash = COALESCE(#{artifactHash}, artifact_hash),
+            artifact_path = COALESCE(#{artifactPath}, artifact_path),
+            inspection_json = COALESCE(#{inspectionJson}, inspection_json),
+            compile_result_json = COALESCE(#{compileResultJson}, compile_result_json),
+            error_code = #{errorCode},
+            error_message_safe = #{errorMessageSafe},
+            updated_at = NOW()
+        WHERE id = #{id} AND status != 'cancelled'
+    </update>
+
+    <select id="selectImportJobStatus" resultType="java.lang.String">
+        SELECT status FROM ai_persona_import_job WHERE id = #{id}
+    </select>
+
+    <update id="cancelImportJob">
+        UPDATE ai_persona_import_job
+        SET status = 'cancelled', progress = 100, error_code = NULL,
+            error_message_safe = NULL, updated_at = NOW()
+        WHERE id = #{id} AND owner_user_id = #{ownerUserId}
+          AND status IN ('queued', 'resolving_source', 'downloading', 'inspecting',
+                         'compiling', 'validating', 'testing')
+    </update>
+
+    <select id="selectSourceIdentity" resultType="java.util.LinkedHashMap">
+        SELECT id, owner_user_id AS ownerUserId
+        FROM ai_persona_source
+        WHERE id = #{personaId}
+        LIMIT 1
+    </select>
+
+    <insert id="upsertPersonaSource" parameterType="map">
+        INSERT INTO ai_persona_source(
+            id, owner_user_id, visibility, adapter_type, display_name,
+            persona_kind, description, source_url, source_ref, source_commit,
+            artifact_hash, upstream_schema_version, raw_artifact_path,
+            is_real_person, is_public_figure,
+            relationship_ceiling, archived, creator, created_at, updater, updated_at
+        ) VALUES (
+            #{personaId}, #{ownerUserId}, #{visibility}, #{adapterType}, #{displayName},
+            #{personaKind}, #{description}, #{sourceUrl}, #{sourceRef}, #{sourceCommit},
+            #{artifactHash}, #{upstreamSchemaVersion}, #{artifactPath},
+            #{realPerson}, #{publicFigure},
+            #{relationshipCeiling}, 0, #{ownerUserId}, NOW(), #{ownerUserId}, NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            display_name = VALUES(display_name),
+            persona_kind = VALUES(persona_kind),
+            description = VALUES(description),
+            source_url = VALUES(source_url),
+            source_ref = VALUES(source_ref),
+            source_commit = VALUES(source_commit),
+            artifact_hash = VALUES(artifact_hash),
+            upstream_schema_version = VALUES(upstream_schema_version),
+            raw_artifact_path = VALUES(raw_artifact_path),
+            is_real_person = VALUES(is_real_person),
+            is_public_figure = VALUES(is_public_figure),
+            relationship_ceiling = VALUES(relationship_ceiling),
+            archived = 0,
+            updater = VALUES(updater),
+            updated_at = NOW()
+    </insert>
+
+    <insert id="insertPersonaVersion" parameterType="map">
+        INSERT INTO ai_persona_version(
+            id, persona_source_id, version, artifact_hash, source_commit,
+            canonical_spec_json, runtime_prompt, compiler_version, token_count,
+            quality_score, test_status, test_report, status, validation_report, created_at
+        ) VALUES (
+            #{id}, #{personaId}, #{version}, #{artifactHash}, #{sourceCommit},
+            #{canonicalSpecJson}, #{runtimePrompt}, #{compilerVersion}, #{tokenCount},
+            #{qualityScore}, #{testStatus}, #{testReport}, 'draft', #{validationReport}, NOW()
+        )
+    </insert>
+
+    <select id="selectVersionByHash" resultType="java.util.LinkedHashMap">
+        SELECT version, artifact_hash AS artifactHash, status
+        FROM ai_persona_version
+        WHERE persona_source_id = #{personaId} AND version = #{version}
+        LIMIT 1
+    </select>
+
+    <select id="selectPersonas" resultType="java.util.LinkedHashMap">
+        SELECT s.id AS personaId,
+               s.display_name AS displayName,
+               s.description,
+               s.avatar_path AS avatarPath,
+               s.persona_kind AS personaKind,
+               s.visibility,
+               s.source_url AS sourceUrl,
+               s.source_commit AS sourceCommit,
+               s.relationship_ceiling AS relationshipCeiling,
+               s.latest_published_version AS publishedVersion,
+               (s.owner_user_id = #{userId}) AS owned,
+               s.archived,
+               s.updated_at AS updatedAt
+        FROM ai_persona_source s
+        WHERE s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public')
+        ORDER BY s.archived ASC, s.updated_at DESC
+    </select>
+
+    <select id="selectPersona" resultType="java.util.LinkedHashMap">
+        SELECT s.id AS personaId,
+               s.owner_user_id AS ownerUserId,
+               s.display_name AS displayName,
+               s.description,
+               s.avatar_path AS avatarPath,
+               s.persona_kind AS personaKind,
+               s.visibility,
+               s.source_url AS sourceUrl,
+               s.source_ref AS sourceRef,
+               s.source_commit AS sourceCommit,
+               s.artifact_hash AS artifactHash,
+               s.is_real_person AS realPerson,
+               s.is_public_figure AS publicFigure,
+               s.relationship_ceiling AS relationshipCeiling,
+               s.latest_published_version AS publishedVersion,
+               (s.owner_user_id = #{userId}) AS owned,
+               s.archived,
+               s.created_at AS createdAt,
+               s.updated_at AS updatedAt
+        FROM ai_persona_source s
+        WHERE s.id = #{personaId}
+          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+        LIMIT 1
+    </select>
+
+    <select id="selectVersions" resultType="java.util.LinkedHashMap">
+        SELECT v.version,
+               v.artifact_hash AS artifactHash,
+               v.source_commit AS sourceCommit,
+               v.compiler_version AS compilerVersion,
+               v.token_count AS tokenCount,
+               v.quality_score AS qualityScore,
+               v.test_status AS testStatus,
+               v.status,
+               v.created_at AS createdAt,
+               v.published_at AS publishedAt,
+               v.archived_at AS archivedAt
+        FROM ai_persona_version v
+        JOIN ai_persona_source s ON s.id = v.persona_source_id
+        WHERE v.persona_source_id = #{personaId}
+          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+        ORDER BY v.created_at DESC
+    </select>
+
+    <select id="selectVersion" resultType="java.util.LinkedHashMap">
+        SELECT v.version,
+               v.artifact_hash AS artifactHash,
+               v.source_commit AS sourceCommit,
+               v.compiler_version AS compilerVersion,
+               v.token_count AS tokenCount,
+               v.quality_score AS qualityScore,
+               v.test_status AS testStatus,
+               CAST(v.test_report AS CHAR) AS testReport,
+               v.status,
+               CAST(v.validation_report AS CHAR) AS validationReport,
+               CAST(v.canonical_spec_json AS CHAR) AS canonicalSpec,
+               v.runtime_prompt AS runtimePrompt,
+               v.created_at AS createdAt,
+               v.published_at AS publishedAt,
+               v.archived_at AS archivedAt
+        FROM ai_persona_version v
+        JOIN ai_persona_source s ON s.id = v.persona_source_id
+        WHERE v.persona_source_id = #{personaId}
+          AND v.version = #{version}
+          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+        LIMIT 1
+    </select>
+
+    <update id="publishVersion">
+        UPDATE ai_persona_version v
+        JOIN ai_persona_source s ON s.id = v.persona_source_id
+        SET v.status = 'published',
+            v.published_at = NOW(),
+            v.published_by = #{userId}
+        WHERE v.persona_source_id = #{personaId}
+          AND v.version = #{version}
+          AND s.owner_user_id = #{userId}
+          AND s.archived = 0
+          AND v.status != 'archived'
+          AND JSON_UNQUOTE(JSON_EXTRACT(v.validation_report, '$.valid')) = 'true'
+          AND v.test_status = 'passed'
+    </update>
+
+    <update id="publishSource">
+        UPDATE ai_persona_source s
+        JOIN ai_persona_version v
+          ON v.persona_source_id = s.id
+         AND v.version = #{version}
+         AND v.status = 'published'
+        SET s.latest_published_version = v.version,
+            s.visibility = #{visibility},
+            s.updated_at = NOW(),
+            s.updater = #{userId}
+        WHERE s.id = #{personaId}
+          AND s.owner_user_id = #{userId}
+          AND s.archived = 0
+    </update>
+
+    <update id="setPublishedPointer">
+        UPDATE ai_persona_source s
+        JOIN ai_persona_version v ON v.persona_source_id = s.id AND v.version = #{version}
+        SET s.latest_published_version = #{version}, s.updated_at = NOW()
+        WHERE s.id = #{personaId} AND v.status = 'published' AND s.archived = 0
+    </update>
+
+    <update id="archiveVersion">
+        UPDATE ai_persona_version v
+        JOIN ai_persona_source s ON s.id = v.persona_source_id
+        SET v.status = 'archived', v.archived_at = NOW()
+        WHERE v.persona_source_id = #{personaId}
+          AND v.version = #{version}
+          AND (s.latest_published_version IS NULL OR s.latest_published_version != #{version})
+    </update>
+
+    <insert id="insertTestRun" parameterType="map">
+        INSERT INTO ai_persona_test_run(
+            id, persona_source_id, version, suite_version, model_config_id,
+            status, created_by, created_at
+        ) VALUES (
+            #{id}, #{personaId}, #{version}, #{suiteVersion}, #{modelConfigId},
+            'pending', #{createdBy}, NOW()
+        )
+    </insert>
+
+    <update id="completeTestRun">
+        UPDATE ai_persona_test_run
+        SET status = #{status}, score_json = #{scoreJson}, report_json = #{reportJson}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateVersionTest">
+        UPDATE ai_persona_version
+        SET test_status = #{testStatus}, quality_score = #{qualityScore}, test_report = #{testReport}
+        WHERE persona_source_id = #{personaId} AND version = #{version} AND status != 'archived'
+    </update>
+
+    <select id="selectTestRuns" resultType="java.util.LinkedHashMap">
+        SELECT r.id,
+               r.suite_version AS suiteVersion,
+               r.model_config_id AS modelConfigId,
+               r.status,
+               CAST(r.score_json AS CHAR) AS scoreJson,
+               CAST(r.report_json AS CHAR) AS reportJson,
+               r.created_by AS createdBy,
+               r.created_at AS createdAt
+        FROM ai_persona_test_run r
+        JOIN ai_persona_source s ON s.id = r.persona_source_id
+        WHERE r.persona_source_id = #{personaId} AND r.version = #{version}
+          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+        ORDER BY r.created_at DESC
+        LIMIT 20
+    </select>
+
+    <select id="selectPersonaAudit" resultType="java.util.LinkedHashMap">
+        SELECT a.id,
+               a.action,
+               a.target_type AS targetType,
+               a.target_id AS targetId,
+               CAST(a.details_json AS CHAR) AS detailsJson,
+               a.created_at AS createdAt
+        FROM ai_companion_audit a
+        JOIN ai_persona_source s ON s.id = #{personaId}
+        WHERE (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+          AND (a.target_id = #{personaId}
+               OR a.target_id LIKE CONCAT(#{personaId}, '@%')
+               OR a.target_id LIKE CONCAT(#{personaId}, ':%'))
+        ORDER BY a.created_at DESC
+        LIMIT 100
+    </select>
+
+    <insert id="insertAudit">
+        INSERT INTO ai_companion_audit(
+            operator_user_id, action, target_type, target_id, details_json, created_at
+        ) VALUES (
+            #{operatorUserId}, #{action}, #{targetType}, #{targetId}, #{detailsJson}, NOW()
+        )
+    </insert>
+</mapper>

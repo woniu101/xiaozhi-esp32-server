@@ -37,7 +37,7 @@ public class AgentSnapshotController {
     @Operation(summary = "获取智能体快照列表")
     @RequiresPermissions("sys:role:normal")
     public Result<PageData<AgentSnapshotVO>> page(
-            @PathVariable String agentId,
+            @PathVariable("agentId") String agentId,
             @ParameterObject AgentSnapshotPageDTO params) {
         checkPermission(agentId);
         return new Result<PageData<AgentSnapshotVO>>().ok(agentSnapshotService.page(agentId, params));
@@ -46,7 +46,9 @@ public class AgentSnapshotController {
     @GetMapping("/{snapshotId}")
     @Operation(summary = "获取智能体快照详情")
     @RequiresPermissions("sys:role:normal")
-    public Result<AgentSnapshotVO> getSnapshot(@PathVariable String agentId, @PathVariable String snapshotId) {
+    public Result<AgentSnapshotVO> getSnapshot(
+            @PathVariable("agentId") String agentId,
+            @PathVariable("snapshotId") String snapshotId) {
         checkPermission(agentId);
         return new Result<AgentSnapshotVO>().ok(agentSnapshotService.getSnapshot(agentId, snapshotId));
     }
@@ -54,7 +56,7 @@ public class AgentSnapshotController {
     @PostMapping("/{snapshotId}/restore")
     @Operation(summary = "恢复智能体快照")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> restore(@PathVariable String agentId, @PathVariable String snapshotId,
+    public Result<Void> restore(@PathVariable("agentId") String agentId, @PathVariable("snapshotId") String snapshotId,
             @RequestBody @Valid AgentSnapshotRestoreDTO request) {
         checkPermission(agentId);
         agentSnapshotService.restoreSnapshot(agentId, snapshotId, request.getCurrentStateToken());
@@ -64,7 +66,9 @@ public class AgentSnapshotController {
     @DeleteMapping("/{snapshotId}")
     @Operation(summary = "删除智能体历史快照")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> deleteSnapshot(@PathVariable String agentId, @PathVariable String snapshotId) {
+    public Result<Void> deleteSnapshot(
+            @PathVariable("agentId") String agentId,
+            @PathVariable("snapshotId") String snapshotId) {
         checkPermission(agentId);
         agentSnapshotService.deleteSnapshot(agentId, snapshotId);
         return new Result<>();

@@ -3,6 +3,7 @@ from aiohttp import web
 from config.logger import setup_logging
 from core.api.ota_handler import OTAHandler
 from core.api.vision_handler import VisionHandler
+from core.api.persona_handler import PersonaCompilerHandler
 
 TAG = __name__
 
@@ -13,6 +14,7 @@ class SimpleHttpServer:
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
+        self.persona_handler = PersonaCompilerHandler(config)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
         """获取websocket地址
@@ -40,7 +42,9 @@ class SimpleHttpServer:
             port = int(server_config.get("http_port", 8003))
 
             if port:
-                app = web.Application()
+                companion_config = self.config.get("companion", {})
+                upload_mb = int(companion_config.get("artifact_max_upload_mb") or 10)
+                app = web.Application(client_max_size=max(2, upload_mb * 2) * 1024 * 1024)
 
                 if not read_config_from_api:
                     # 如果没有开启智控台，只是单模块运行，就需要再添加简单OTA接口，用于下发websocket接口
@@ -71,6 +75,26 @@ class SimpleHttpServer:
                         ),
                         web.options(
                             "/mcp/vision/explain", self.vision_handler.handle_options
+                        ),
+                        web.post(
+                            "/internal/companion/persona/inspect",
+                            self.persona_handler.handle_inspect,
+                        ),
+                        web.post(
+                            "/internal/companion/persona/compile",
+                            self.persona_handler.handle_compile,
+                        ),
+                        web.post(
+                            "/internal/companion/persona/test",
+                            self.persona_handler.handle_test,
+                        ),
+                        web.post(
+                            "/internal/companion/persona/compiler-info",
+                            self.persona_handler.handle_info,
+                        ),
+                        web.post(
+                            "/internal/companion/health",
+                            self.persona_handler.handle_health,
                         ),
                     ]
                 )

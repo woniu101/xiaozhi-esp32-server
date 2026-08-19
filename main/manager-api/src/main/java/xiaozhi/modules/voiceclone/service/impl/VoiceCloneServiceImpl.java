@@ -231,7 +231,6 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
         if (entity == null) {
             throw new RenException(ErrorCode.VOICE_CLONE_RECORD_NOT_EXIST);
         }
-
         // 读取音频文件并转为字节数组
         byte[] voiceData = voiceFile.getBytes();
 
@@ -277,7 +276,6 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
         if (entity.getVoice() == null || entity.getVoice().length == 0) {
             throw new RenException(ErrorCode.VOICE_CLONE_AUDIO_NOT_UPLOADED);
         }
-
         try {
 
             ModelConfigEntity modelConfig = modelConfigService.getModelByIdFromCache(entity.getModelId());
@@ -298,7 +296,8 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
             baseDao.updateById(entity);
             throw re;
         } catch (Exception e) {
-            e.printStackTrace();
+            log.warn("Voice clone training failed: cloneId={}, errorType={}",
+                    cloneId, e.getClass().getSimpleName());
             entity.setTrainStatus(3);
             entity.setTrainError(e.getMessage());
             baseDao.updateById(entity);
@@ -347,8 +346,7 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        System.out.println(">>> HTTP status = " + response.statusCode());
-        System.out.println(">>> response body = " + response.body());
+        log.info("Voice clone provider responded: cloneId={}, status={}", entity.getId(), response.statusCode());
 
         Map<String, Object> rsp = objectMapper.readValue(response.body(),
                 new TypeReference<Map<String, Object>>() {
@@ -387,4 +385,5 @@ public class VoiceCloneServiceImpl extends BaseServiceImpl<VoiceCloneDao, VoiceC
             throw new RenException(ErrorCode.VOICE_CLONE_RESPONSE_FORMAT_ERROR);
         }
     }
+
 }

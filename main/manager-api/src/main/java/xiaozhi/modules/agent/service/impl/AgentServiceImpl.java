@@ -61,6 +61,7 @@ import xiaozhi.modules.model.service.ModelProviderService;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.enums.SuperAdminEnum;
 import xiaozhi.modules.timbre.service.TimbreService;
+import xiaozhi.modules.persona.service.PersonaService;
 
 @Service
 @AllArgsConstructor
@@ -79,6 +80,7 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
     private final AgentTagService agentTagService;
     private final CorrectWordFileService correctWordFileService;
     private final AgentSnapshotService agentSnapshotService;
+    private final PersonaService personaService;
 
     @Override
     public PageData<AgentEntity> adminAgentList(Map<String, Object> params) {
@@ -504,16 +506,8 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         existingEntity.setUpdater(user.getId());
         existingEntity.setUpdatedAt(new Date());
 
-        // 更新记忆策略
-        // 删除所有记录
-        if (existingEntity.getMemModelId() != null && existingEntity.getMemModelId().equals(Constant.MEMORY_NO_MEM)) {
-            agentChatHistoryService.deleteByAgentId(existingEntity.getId(), true, true);
-            existingEntity.setSummaryMemory("");
-            // 删除记忆
-        } else if (existingEntity.getMemModelId() != null
-                && existingEntity.getMemModelId().equals(Constant.MEMORY_MEM_REPORT_ONLY)) {
-            existingEntity.setSummaryMemory("");
-        }
+        // 记忆模式只控制后续记录和召回。切换到“无记忆/仅上报”不得隐式
+        // 删除历史记录或摘要；清理数据必须通过独立、带确认的管理操作完成。
 
         // 更新上下文源配置
         if (dto.getContextProviders() != null) {
@@ -531,6 +525,46 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         // 更新智能体标签
         if (dto.getTagNames() != null || dto.getTagIds() != null) {
             agentTagService.saveAgentTags(agentId, dto.getTagIds(), dto.getTagNames());
+        }
+
+        boolean effectiveCompanionEnabled = dto.getCompanionEnabled() != null
+                ? Boolean.TRUE.equals(dto.getCompanionEnabled())
+                : Boolean.TRUE.equals(existingEntity.getCompanionEnabled());
+        String effectivePersonaId = dto.getPersonaId() != null ? dto.getPersonaId() : existingEntity.getPersonaId();
+        boolean personaChanged = dto.getPersonaId() != null
+                && !StringUtils.equals(dto.getPersonaId(), existingEntity.getPersonaId());
+        String effectivePersonaVersion = dto.getPersonaVersion() != null
+                ? dto.getPersonaVersion() : personaChanged ? null : existingEntity.getPersonaVersion();
+        String effectiveTtsVoiceId = dto.getTtsVoiceId() != null ? dto.getTtsVoiceId() : existingEntity.getTtsVoiceId();
+        if (effectiveCompanionEnabled && StringUtils.isBlank(effectivePersonaId)) {
+            throw new RenException(ErrorCode.PARAM_VALUE_NULL);
+        }
+        if (effectiveCompanionEnabled) {
+            personaService.requireBindable(user.getId(), effectivePersonaId, effectivePersonaVersion);
+        }
+        if (dto.getCompanionOverlay() != null) {
+            if (dto.getCompanionOverlay().length() > 10_000) {
+                throw new RenException(ErrorCode.PARAM_JSON_INVALID);
+            }
+            try {
+                dto.setCompanionOverlay(JsonUtils.toJsonString(JsonUtils.parseMap(dto.getCompanionOverlay())));
+            } catch (Exception error) {
+                throw new RenException(ErrorCode.PARAM_JSON_INVALID, error);
+            }
+        }
+        if (dto.getCompanionEnabled() != null
+                || dto.getPersonaId() != null
+                || dto.getPersonaVersion() != null
+                || dto.getCompanionOverlay() != null) {
+            agentDao.upsertCompanionBinding(
+                    agentId,
+                    dto.getCompanionEnabled(),
+                    dto.getPersonaId(),
+                    personaChanged && dto.getPersonaVersion() == null ? "" : dto.getPersonaVersion(),
+                    dto.getCompanionOverlay(),
+                    user.getId());
+            personaService.recordBindingAudit(
+                    user.getId(), agentId, effectiveCompanionEnabled, effectivePersonaId, effectivePersonaVersion);
         }
 
         boolean b = validateLLMIntentParams(existingEntity.getLlmModelId(), existingEntity.getIntentModelId());
@@ -556,6 +590,20 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
         AgentUpdateDTO agentUpdateDTO = new AgentUpdateDTO();
         agentUpdateDTO.setSummaryMemory(dto.getSummaryMemory());
         updateAgentById(device.getAgentId(), agentUpdateDTO, userId, false);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void clearLegacyMemory(String agentId, Long userId) {
+        getAgentById(agentId, userId);
+        agentChatHistoryService.deleteByAgentId(agentId, true, true);
+        AgentEntity patch = new AgentEntity();
+        patch.setId(agentId);
+        patch.setSummaryMemory("");
+        patch.setUpdater(userId);
+        patch.setUpdatedAt(new Date());
+        updateById(patch);
+        agentSnapshotService.createSnapshot(agentId, "legacy-memory-clear");
     }
 
     @Override
