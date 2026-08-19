@@ -354,10 +354,22 @@ class SQLiteCompanionRepository(CompanionRepository):
         finally:
             connection.close()
 
-    async def search_memories(self, identity: CompanionIdentity, query: str, limit: int = 6) -> list[dict]:
-        return self._search_memories_sync(identity, query, limit)
+    async def search_memories(
+        self,
+        identity: CompanionIdentity,
+        query: str,
+        limit: int = 6,
+        exclude_ids: set[int | str] | None = None,
+    ) -> list[dict]:
+        return self._search_memories_sync(identity, query, limit, exclude_ids)
 
-    def _search_memories_sync(self, identity: CompanionIdentity, query: str, limit: int) -> list[dict]:
+    def _search_memories_sync(
+        self,
+        identity: CompanionIdentity,
+        query: str,
+        limit: int,
+        exclude_ids: set[int | str] | None = None,
+    ) -> list[dict]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -372,7 +384,7 @@ class SQLiteCompanionRepository(CompanionRepository):
                 """,
                 (identity.user_id, identity.agent_id, identity.persona_id, iso_now()),
             ).fetchall()
-            selected = rank_memories(rows, query, limit)
+            selected = rank_memories(rows, query, limit, exclude_ids=exclude_ids)
             if selected:
                 connection.executemany(
                     "UPDATE companion_memory SET last_accessed_at=? WHERE id=?",

@@ -31,3 +31,16 @@ class StateReducer:
             relationship=self.relationship.apply(state.relationship, events, meaningful_turn, allowed_stages),
             revision=state.revision + 1,
         )
+
+    def preview(
+        self,
+        state: CompanionState,
+        events: list[CompanionEvent],
+        allowed_stages: list[str] | None = None,
+    ) -> CompanionState:
+        """Apply current-user signals for response generation without committing a revision."""
+        return CompanionState(
+            emotion=self.emotion.apply(state.emotion, events),
+            relationship=self.relationship.apply(state.relationship, events, False, allowed_stages),
+            revision=state.revision,
+        )

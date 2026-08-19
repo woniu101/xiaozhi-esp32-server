@@ -69,7 +69,11 @@ class ManagerApiCompanionRepository(CompanionRepository):
         )
 
     async def search_memories(
-        self, identity: CompanionIdentity, query: str, limit: int = 6
+        self,
+        identity: CompanionIdentity,
+        query: str,
+        limit: int = 6,
+        exclude_ids: set[int | str] | None = None,
     ) -> list[dict]:
         rows = await self._client()._execute_async_request(
             "POST",
@@ -82,4 +86,4 @@ class ManagerApiCompanionRepository(CompanionRepository):
                 "limit": 100,
             },
         )
-        return rank_memories(rows or [], query, limit)
+        return rank_memories(rows or [], query, limit, exclude_ids=exclude_ids)

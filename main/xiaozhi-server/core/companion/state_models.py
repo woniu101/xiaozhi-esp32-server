@@ -87,11 +87,19 @@ class CompanionTurnContext:
     persona_prompt: str
     runtime_state_prompt: str
     relevant_memories_prompt: str
+    response_plan_prompt: str = ""
+    situational_examples_prompt: str = ""
     expected_expression: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def render(self) -> str:
-        blocks = [self.persona_prompt, self.runtime_state_prompt, self.relevant_memories_prompt]
+        blocks = [
+            self.persona_prompt,
+            self.runtime_state_prompt,
+            self.response_plan_prompt,
+            self.relevant_memories_prompt,
+            self.situational_examples_prompt,
+        ]
         return "\n\n".join(block for block in blocks if block).strip()
 
 

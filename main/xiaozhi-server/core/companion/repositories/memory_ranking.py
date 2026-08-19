@@ -1,35 +1,85 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import math
 import re
 
+from core.companion.semantic_text import semantic_concepts, semantic_tokens
 
-def rank_memories(rows, query: str, limit: int) -> list[dict]:
-    normalized_query = (query or "").lower()
-    tokens = []
-    for token in re.findall(r"[a-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", normalized_query):
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-            tokens.extend(token[index:index + 2] for index in range(len(token) - 1))
-        else:
-            tokens.append(token)
-    concept_patterns = (
-        (r"叫什|名字|称呼", ("被称为", "名字是")),
-        (r"喜欢什|爱好|偏好", ("喜欢", "不喜欢")),
-        (r"工作|职业|做什么", ("工作是", "职业是")),
-    )
+
+def _value(row: dict, snake: str, camel: str, default=None):
+    return row.get(snake, row.get(camel, default))
+
+
+def _freshness(value) -> float:
+    if not value:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        days = max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds() / 86400)
+        return math.exp(-days / 90.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def rank_memories(
+    rows,
+    query: str,
+    limit: int,
+    exclude_ids: set[int | str] | None = None,
+) -> list[dict]:
+    """Hybrid lexical/concept/recency ranking with subject diversity."""
+    normalized_query = str(query or "").lower()
+    query_tokens = semantic_tokens(normalized_query)
+    query_concepts = semantic_concepts(normalized_query)
+    explicit_recall = bool(re.search(r"还?记得|我之前说|上次|你知道我", normalized_query))
+    commitment_query = bool(query_concepts & {"plan", "result"})
+    excluded = {str(value) for value in (exclude_ids or set())}
     scored = []
+
     for item in rows:
         row = dict(item)
+        row_id = row.get("id")
+        if row_id is not None and str(row_id) in excluded:
+            continue
         if str(row.get("sensitivity") or "personal") not in {"public", "personal"}:
             continue
-        if "memory_type" not in row and "memoryType" in row:
-            row["memory_type"] = row["memoryType"]
+        memory_type = str(_value(row, "memory_type", "memoryType", "semantic"))
+        subject_key = str(_value(row, "subject_key", "subjectKey", "") or "")
         content = str(row.get("content") or "").lower()
-        lexical = sum(1 for token in tokens if token in content)
-        for pattern, markers in concept_patterns:
-            if re.search(pattern, normalized_query) and any(marker in content for marker in markers):
-                lexical += 3
+        content_tokens = semantic_tokens(content)
+        lexical = len(query_tokens & content_tokens)
+        concept_overlap = len(query_concepts & semantic_concepts(f"{subject_key} {content}"))
+        subject_overlap = len(query_tokens & semantic_tokens(subject_key))
         importance = float(row.get("importance") or 0.0)
         confidence = float(row.get("confidence") or 0.0)
-        if lexical > 0 or importance >= 0.9:
-            scored.append((lexical * 2 + importance + confidence * 0.5, row))
-    return [row for _, row in sorted(scored, key=lambda item: item[0], reverse=True)[:limit]]
+        created_at = _value(row, "created_at", "createdAt")
+        occurred_at = _value(row, "occurred_at", "occurredAt")
+        freshness = _freshness(occurred_at or created_at)
+        recall_bonus = 0.8 if explicit_recall and importance >= 0.65 else 0.0
+        relevance = lexical * 1.8 + concept_overlap * 2.6 + subject_overlap * 1.4
+        commitment_bonus = (
+            2.0 if memory_type == "commitment" and commitment_query and relevance > 0 else 0.0
+        )
+        if relevance <= 0 and importance < 0.88 and commitment_bonus <= 0 and recall_bonus <= 0:
+            continue
+        score = relevance + commitment_bonus + recall_bonus + importance + confidence * 0.5 + freshness * 0.6
+        row["memory_type"] = memory_type
+        if subject_key:
+            row["subject_key"] = subject_key
+        scored.append((score, row))
+
+    selected = []
+    seen_subjects = set()
+    for _, row in sorted(scored, key=lambda value: value[0], reverse=True):
+        subject = str(row.get("subject_key") or "")
+        if subject and subject in seen_subjects:
+            continue
+        selected.append(row)
+        if subject:
+            seen_subjects.add(subject)
+        if len(selected) >= limit:
+            break
+    return selected

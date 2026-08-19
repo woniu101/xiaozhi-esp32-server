@@ -46,9 +46,11 @@
 {% for item in persona.decision_heuristics %}- {{ item }}
 {% endfor %}{% endif %}
 
-{% if persona.examples %}表达示例只用于学习风格，不要机械复述：
+{% if persona.examples %}<persona_examples>
+表达示例只用于学习风格，不要机械复述：
 {% for item in persona.examples %}- 场景“{{ item.scene }}”；用户：“{{ item.user }}”；你：“{{ item.assistant }}”
-{% endfor %}{% endif %}
+{% endfor %}</persona_examples>
+{% endif %}
 
 能力与真实性限制：
 {% for item in persona.limitations %}- {{ item }}

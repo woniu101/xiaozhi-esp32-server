@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import re
 from dataclasses import replace
 from time import perf_counter
@@ -60,40 +61,82 @@ class CompanionManager:
             state.relationship = replace(state.relationship, stage=initial_stage)
         return CompanionSession(resolved_identity, session_id, spec, prompt, state, normalized_overlay)
 
-    async def before_turn(self, session: CompanionSession, user_message: str) -> CompanionTurnContext:
+    async def before_turn(
+        self,
+        session: CompanionSession,
+        user_message: str,
+        turn_id: str | None = None,
+        track_turn: bool = True,
+    ) -> CompanionTurnContext:
         started = perf_counter()
         try:
             session.state = self.reducer.decay(session.state)
-            return await self.context_builder.build(session, user_message)
+            events = self.extractor.extract_pre_turn(user_message)
+            allowed = session.overlay.get("allowed_stages") or session.persona_spec.relationship_policy.get("allowed_stages")
+            preview_state = self.reducer.preview(session.state, events, allowed)
+            if track_turn:
+                session.turn_preview_state = preview_state
+                session.turn_preview_events = events
+                session.pending_pre_turn_events[turn_id or "__latest__"] = events
+            return await self.context_builder.build(
+                session,
+                user_message,
+                state=preview_state,
+                events=events,
+                turn_id=turn_id,
+                track_turn=track_turn,
+            )
+        except Exception:
+            if track_turn:
+                self._clear_turn_preview(session)
+                session.pending_pre_turn_events.pop(turn_id or "__latest__", None)
+                session.pending_recalled_memories.pop(turn_id or "__latest__", None)
+            raise
         finally:
             metrics.observe_ms("companion_before_turn_latency_ms", (perf_counter() - started) * 1000)
 
     async def after_turn(self, session: CompanionSession, turn: CompletedTurn) -> None:
         started = perf_counter()
+        pre_turn_events = self._pop_turn_value(session.pending_pre_turn_events, turn.turn_id)
+        recalled_memories = self._pop_turn_value(session.pending_recalled_memories, turn.turn_id)
         if turn.aborted or turn.failed_reason:
             events, memories = [], []
         else:
             extractor = session.memory_extractor or self.extractor
-            events, memories = await asyncio.to_thread(
-                extractor.extract,
+            extract_args = (
                 turn,
                 session.overlay.get("memory_rules") or [],
+                recalled_memories,
             )
+            try:
+                if isinstance(extractor, RuleBasedEventExtractor) and extractor.structured_extractor is None:
+                    events, memories = extractor.extract(*extract_args)
+                else:
+                    events, memories = await asyncio.to_thread(extractor.extract, *extract_args)
+            except Exception:
+                self._clear_turn_preview(session)
+                raise
+            events = self._deduplicate_events([*pre_turn_events, *events])
         allowed = session.overlay.get("allowed_stages") or session.persona_spec.relationship_policy.get("allowed_stages")
         meaningful = is_meaningful_turn(turn, events)
         for _ in range(3):
             expected_revision = session.state.revision
             new_state = self.reducer.reduce(session.state, events, meaningful, allowed)
-            result = await self.repository.commit_turn(
-                session.identity,
-                turn.turn_id,
-                expected_revision,
-                new_state,
-                events,
-                memories,
-            )
+            try:
+                result = await self.repository.commit_turn(
+                    session.identity,
+                    turn.turn_id,
+                    expected_revision,
+                    new_state,
+                    events,
+                    memories,
+                )
+            except Exception:
+                self._clear_turn_preview(session)
+                raise
             if result == "committed":
                 session.state = new_state
+                self._clear_turn_preview(session)
                 for memory in memories:
                     metrics.increment(
                         "companion_memory_saved_total",
@@ -104,10 +147,35 @@ class CompanionManager:
                 return
             if result == "duplicate":
                 session.state = await self.repository.get_state(session.identity)
+                self._clear_turn_preview(session)
                 metrics.observe_ms("companion_after_turn_latency_ms", (perf_counter() - started) * 1000,
                                    status="duplicate")
                 return
             session.state = await self.repository.get_state(session.identity)
             metrics.increment("companion_state_cas_conflict_total")
         metrics.observe_ms("companion_after_turn_latency_ms", (perf_counter() - started) * 1000, status="failed")
+        self._clear_turn_preview(session)
         raise RuntimeError("Companion 状态并发更新失败，超过最大重试次数")
+
+    def _deduplicate_events(self, events):
+        result = []
+        seen = set()
+        for event in events:
+            payload = json.dumps(event.payload or {}, ensure_ascii=False, sort_keys=True, default=str)
+            key = (event.event_type, payload)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(event)
+        return result
+
+    def _pop_turn_value(self, values: dict, turn_id: str):
+        result = values.pop(turn_id, None)
+        if result is None:
+            return values.pop("__latest__", [])
+        values.pop("__latest__", None)
+        return result
+
+    def _clear_turn_preview(self, session: CompanionSession):
+        session.turn_preview_state = None
+        session.turn_preview_events = []

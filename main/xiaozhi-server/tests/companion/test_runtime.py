@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from core.companion.manager import CompanionManager
 from core.companion.models import PersonaSpec, ValidationReport
@@ -247,6 +248,127 @@ class CompanionRuntimeTest(unittest.TestCase):
         first_context = await self.manager.before_turn(reopened_first, "你记得我叫什么吗")
         self.assertEqual(reopened_first.state.revision, 1)
         self.assertIn("用户希望被称为阿明", first_context.relevant_memories_prompt)
+
+    def test_current_turn_preview_drives_reply_without_double_state_update(self):
+        asyncio.run(self._current_turn_preview_drives_reply_without_double_state_update())
+
+    async def _current_turn_preview_drives_reply_without_double_state_update(self):
+        session = await self.manager.open_session(self.identity, "session-preview")
+        context = await self.manager.before_turn(session, "你真蠢", turn_id="turn-preview")
+
+        self.assertEqual(context.metadata["response_plan"]["dialogue_act"], "boundary")
+        self.assertEqual(session.state.emotion.irritation, 0.0)
+        self.assertGreater(session.turn_preview_state.emotion.irritation, 0.0)
+
+        recorder = TurnRecorder("你真蠢", "turn-preview")
+        recorder.append_assistant_chunk("这话我不喜欢。")
+        await self.manager.after_turn(session, recorder.finalize())
+        self.assertAlmostEqual(session.state.emotion.irritation, 0.085, places=3)
+        self.assertIsNone(session.turn_preview_state)
+        self.assertEqual(session.turn_preview_events, [])
+
+    def test_memory_recall_avoids_repetition_but_explicit_recall_can_bypass(self):
+        asyncio.run(self._memory_recall_avoids_repetition_but_explicit_recall_can_bypass())
+
+    async def _memory_recall_avoids_repetition_but_explicit_recall_can_bypass(self):
+        session = await self.manager.open_session(self.identity, "session-recall")
+        recorder = TurnRecorder("我喜欢美式咖啡", "turn-recall-save")
+        recorder.append_assistant_chunk("记住了。")
+        await self.manager.after_turn(session, recorder.finalize())
+
+        first = await self.manager.before_turn(session, "咖啡最近喝得有点多", turn_id="turn-recall-1")
+        second = await self.manager.before_turn(session, "咖啡最近喝得有点多", turn_id="turn-recall-2")
+        explicit = await self.manager.before_turn(session, "你还记得我喜欢喝什么吗", turn_id="turn-recall-3")
+        for index in range(3):
+            await self.manager.before_turn(session, "今天天气怎么样", turn_id=f"turn-recall-age-{index}")
+        aged = await self.manager.before_turn(session, "咖啡最近喝得有点多", turn_id="turn-recall-aged")
+
+        self.assertIn("用户喜欢美式咖啡", first.relevant_memories_prompt)
+        self.assertNotIn("用户喜欢美式咖啡", second.relevant_memories_prompt)
+        self.assertIn("用户喜欢美式咖啡", explicit.relevant_memories_prompt)
+        self.assertIn("用户喜欢美式咖啡", aged.relevant_memories_prompt)
+
+    def test_commitment_completion_supersedes_pending_memory(self):
+        asyncio.run(self._commitment_completion_supersedes_pending_memory())
+
+    async def _commitment_completion_supersedes_pending_memory(self):
+        session = await self.manager.open_session(self.identity, "session-commitment")
+        plan = TurnRecorder("明天我要交报告，记得提醒我检查附件", "turn-commitment-plan")
+        plan.append_assistant_chunk("好，记住了。")
+        await self.manager.after_turn(session, plan.finalize())
+
+        recalled = await self.manager.before_turn(
+            session,
+            "附件检查做完了",
+            turn_id="turn-commitment-result",
+        )
+        self.assertIn("待办或承诺", recalled.relevant_memories_prompt)
+        result = TurnRecorder("附件检查做完了", "turn-commitment-result")
+        result.append_assistant_chunk("那就稳了。")
+        await self.manager.after_turn(session, result.finalize())
+
+        memories = await self.repository.search_memories(self.identity, "附件完成结果", 10)
+        contents = [item["content"] for item in memories if item["memory_type"] == "commitment"]
+        self.assertEqual(len(contents), 1)
+        self.assertIn("状态：已完成", contents[0])
+
+    def test_persona_examples_are_selected_by_scene_and_rotated(self):
+        asyncio.run(self._persona_examples_are_selected_by_scene_and_rotated())
+
+    async def _persona_examples_are_selected_by_scene_and_rotated(self):
+        session = await self.manager.open_session(self.identity, "session-examples")
+        session.persona_spec.examples = [
+            {
+                "id": "comfort-1",
+                "scene": "情绪低落 comfort",
+                "tags": ["emotion", "comfort"],
+                "user": "我今天很难过",
+                "assistant": "先别硬撑，坐一会儿。",
+            },
+            {
+                "id": "work-1",
+                "scene": "工作建议 advise",
+                "tags": ["work", "advise"],
+                "user": "这个项目怎么选",
+                "assistant": "先看最关键的限制。",
+            },
+        ]
+        session.persona_prompt = (
+            "<companion_persona>人物规则"
+            "<persona_examples>静态全集不应进入每一轮</persona_examples>"
+            "</companion_persona>"
+        )
+
+        first = await self.manager.before_turn(session, "我今天很难过", turn_id="turn-example-1")
+        second = await self.manager.before_turn(session, "我今天很难过", turn_id="turn-example-2")
+
+        self.assertEqual(first.metadata["selected_example_ids"], ["comfort-1"])
+        self.assertIn("先别硬撑", first.situational_examples_prompt)
+        self.assertNotIn("静态全集", first.render())
+        self.assertNotIn("comfort-1", second.metadata["selected_example_ids"])
+
+    def test_proactive_context_does_not_leave_pending_turn_state(self):
+        asyncio.run(self._proactive_context_does_not_leave_pending_turn_state())
+
+    async def _proactive_context_does_not_leave_pending_turn_state(self):
+        session = await self.manager.open_session(self.identity, "session-proactive-context")
+        await self.manager.before_turn(session, "主动关心一下", track_turn=False)
+        self.assertIsNone(session.turn_preview_state)
+        self.assertEqual(session.pending_pre_turn_events, {})
+        self.assertEqual(session.pending_recalled_memories, {})
+
+    def test_context_failure_clears_preview_and_pending_state(self):
+        asyncio.run(self._context_failure_clears_preview_and_pending_state())
+
+    async def _context_failure_clears_preview_and_pending_state(self):
+        session = await self.manager.open_session(self.identity, "session-context-failure")
+        self.repository.search_memories = AsyncMock(side_effect=RuntimeError("repository unavailable"))
+        with self.assertRaises(RuntimeError):
+            await self.manager.before_turn(session, "我今天很难过", turn_id="turn-context-failure")
+        self.assertIsNone(session.turn_preview_state)
+        self.assertEqual(session.turn_preview_events, [])
+        self.assertEqual(session.pending_pre_turn_events, {})
+        self.assertEqual(session.pending_recalled_memories, {})
 
     def test_registry_can_fall_back_without_moving_state_repository(self):
         base = Path(self.temp.name)

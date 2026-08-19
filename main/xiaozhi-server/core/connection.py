@@ -1033,13 +1033,18 @@ class ConnectionHandler:
             self.companion_session = None
             self.logger.bind(tag=TAG).error(f"Companion 初始化失败，已回退基础聊天: {e}")
 
-    def _build_companion_context(self, query):
+    def _build_companion_context(self, query, turn_id=None, track_turn=True):
         if not query or self.companion_manager is None or self.companion_session is None:
             return None
         try:
             timeout_ms = int(self.config.get("companion", {}).get("context_timeout_ms", 500))
             future = asyncio.run_coroutine_threadsafe(
-                self.companion_manager.before_turn(self.companion_session, query),
+                self.companion_manager.before_turn(
+                    self.companion_session,
+                    query,
+                    turn_id=turn_id,
+                    track_turn=track_turn,
+                ),
                 self.loop,
             )
             return future.result(timeout=max(0.05, timeout_ms / 1000))
@@ -1096,7 +1101,7 @@ class ConnectionHandler:
     def _configure_companion_memory_extractor(self):
         if self.companion_session is None:
             return
-        mode = str(self.config.get("companion", {}).get("memory_extraction_mode") or "rules").lower()
+        mode = str(self.config.get("companion", {}).get("memory_extraction_mode") or "hybrid").lower()
         if mode in {"llm", "hybrid"} and self.llm is not None:
             self.companion_session.memory_extractor = RuleBasedEventExtractor(
                 LLMStructuredMemoryExtractor(self.llm)
@@ -1130,7 +1135,7 @@ class ConnectionHandler:
         )
         if rules:
             instruction += "主动行为偏好：" + "；".join(str(item)[:200] for item in rules[:6])
-        context = self._build_companion_context(instruction)
+        context = self._build_companion_context(instruction, track_turn=False)
         messages = self.dialogue.get_llm_dialogue_with_memory(
             companion_context=context,
         )
@@ -1277,7 +1282,7 @@ class ConnectionHandler:
                 self.last_companion_user_turn_time = time.time()
             turn_recorder = TurnRecorder(query or "")
             self.active_turn_recorder = turn_recorder
-            companion_context = self._build_companion_context(query)
+            companion_context = self._build_companion_context(query, turn_id=turn_recorder.turn_id)
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
             self.dialogue.put(Message(role="user", content=query))

@@ -43,7 +43,8 @@ class Presentation:
 
 
 def resolve_presentation(session, response_text: str = "") -> Presentation:
-    state = getattr(getattr(session, "state", None), "emotion", None)
+    turn_state = getattr(session, "turn_preview_state", None)
+    state = getattr(turn_state or getattr(session, "state", None), "emotion", None)
     if state is None:
         return Presentation("neutral", "neutral", 0.35)
     irritation = float(getattr(state, "irritation", 0.0))
@@ -51,7 +52,22 @@ def resolve_presentation(session, response_text: str = "") -> Presentation:
     warmth = float(getattr(state, "warmth", 0.5))
     valence = float(getattr(state, "valence", 0.5))
     arousal = float(getattr(state, "arousal", 0.35))
-    if irritation >= 0.3:
+    event_types = {
+        getattr(event, "event_type", "") for event in getattr(session, "turn_preview_events", [])
+    }
+    if "user_insulted_companion" in event_types:
+        style = "restrained"
+        intensity = max(0.68, irritation)
+    elif {"user_expressed_exhaustion", "user_expressed_distress"} & event_types:
+        style = "concerned"
+        intensity = 0.62
+    elif "user_expressed_joy" in event_types:
+        style = "happy"
+        intensity = max(0.64, valence)
+    elif {"user_showed_care", "user_expressed_gratitude"} & event_types:
+        style = "warm"
+        intensity = max(0.62, warmth)
+    elif irritation >= 0.3:
         style = "restrained"
         intensity = irritation
     elif fatigue >= 0.68:

@@ -3,6 +3,7 @@ import unittest
 
 from core.companion.presentation import apply_success_acknowledgement, resolve_presentation
 from core.companion.proactive import proactive_due
+from core.companion.state_models import CompanionEvent
 
 
 def _session(**emotion):
@@ -20,6 +21,13 @@ class CompanionPresentationTest(unittest.TestCase):
     def test_apology_overrides_style_without_provider_parameters(self):
         value = resolve_presentation(_session(warmth=0.8), "对不起，我刚才理解错了")
         self.assertEqual("apologetic", value.emotion)
+
+    def test_current_turn_distress_immediately_changes_presentation(self):
+        session = _session()
+        session.turn_preview_events = [CompanionEvent("user_expressed_distress", 0.9)]
+        value = resolve_presentation(session, "先缓一缓，我在。")
+        self.assertEqual("concerned", value.emotion)
+        self.assertEqual("concerned", value.expression)
 
     def test_proactive_schedule_uses_user_turn_and_last_message(self):
         now = 10_000.0

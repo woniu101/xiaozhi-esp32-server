@@ -28,7 +28,7 @@ prompt_template: agent-base-prompt.txt
 
 # 全模块部署时，具体 Persona 绑定由 manager-api 按智能体下发。
 companion:
-  memory_extraction_mode: rules
+  memory_extraction_mode: hybrid
   enabled: false
   persona_admin_enabled: true
   artifact_max_upload_mb: 10

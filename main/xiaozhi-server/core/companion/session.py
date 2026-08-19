@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import PersonaSpec
-from .state_models import CompanionIdentity, CompanionState
+from .state_models import CompanionEvent, CompanionIdentity, CompanionState
 
 
 @dataclass
@@ -16,3 +16,9 @@ class CompanionSession:
     state: CompanionState
     overlay: dict[str, Any] = field(default_factory=dict)
     memory_extractor: Any = None
+    turn_preview_state: CompanionState | None = None
+    turn_preview_events: list[CompanionEvent] = field(default_factory=list)
+    pending_pre_turn_events: dict[str, list[CompanionEvent]] = field(default_factory=dict)
+    pending_recalled_memories: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    recent_memory_turns: list[list[str]] = field(default_factory=list)
+    recent_example_turns: list[list[str]] = field(default_factory=list)

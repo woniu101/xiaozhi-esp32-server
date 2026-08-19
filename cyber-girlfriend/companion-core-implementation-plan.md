@@ -1,6 +1,6 @@
 # CyberGirlfriend Companion Core 技术基线
 
-> 状态：Implemented Baseline v3.0
+> 状态：Implemented Baseline v3.1
 > 更新日期：2026-08-19
 > 用途：指导 Companion Core 后续调试、重构和扩展。产品范围以 `cyber-girlfriend-final-product-plan.md` 为准。
 
@@ -44,12 +44,15 @@ main/xiaozhi-server/core/companion/
 │   └── memory_ranking.py
 ├── context_builder.py
 ├── event_extractor.py
+├── example_selector.py
 ├── manager.py
 ├── models.py
 ├── overlay.py
 ├── presentation.py
 ├── privacy.py
+├── response_planner.py
 ├── runtime.py
+├── semantic_text.py
 ├── session.py
 ├── state_models.py
 ├── state_reducer.py
@@ -169,13 +172,18 @@ RelationshipState:
 ```text
 CompanionManager.before_turn(connection, user_text)
   -> resolve active Persona
-  -> load user-agent state
-  -> retrieve ranked memories
+  -> decay committed user-agent state
+  -> extract current-turn signals
+  -> preview emotion/relationship without incrementing revision
+  -> retrieve ranked memories with recent-item exclusion
+  -> build ResponsePlan and select situational examples
   -> build CompanionTurnContext
   -> return ephemeral system context
 ```
 
 上下文预算按 Persona、状态、记忆和当前轮分配。记忆不足时不伪造；超预算时优先保留核心规则和高相关记忆。
+预览状态只供当前回复和 TTS 表现使用，不直接写入 Repository。主动消息使用 `track_turn=false`，
+不会留下待提交事件、记忆或预览状态。
 
 ### 5.2 LLM 注入
 
@@ -185,10 +193,10 @@ CompanionManager.before_turn(connection, user_text)
 
 ```text
 CompanionManager.after_turn(connection, user_text, assistant_text)
-  -> EventExtractor
-  -> EmotionEngine
-  -> RelationshipEngine
-  -> memory candidates
+  -> rule/structured Memory Extractor
+  -> merge and deduplicate pre-turn/post-turn events
+  -> EmotionEngine + RelationshipEngine exactly once
+  -> memory and commitment candidates
   -> TurnRecorder.commit(turn_id, expected_revision)
 ```
 
@@ -228,6 +236,7 @@ stranger -> familiar -> friend -> ambiguous -> lover -> intimate
 - episodic：有时间和上下文的事件；
 - shared：双方共同完成的事情；
 - relationship：影响关系的事件。
+- commitment：用户计划、提醒请求和角色明确承诺，可由后续完成/取消结果替换。
 
 写入前执行：
 
@@ -241,12 +250,18 @@ stranger -> familiar -> friend -> ambiguous -> lover -> intimate
 生命周期规则：
 
 - `memory_rules` 在提取阶段生效，可限制主题或只保留指定类型；
-- 规则提取为低延迟基线，可选 StructuredMemoryExtractor 使用小模型或主模型补充结构化候选；
+- 规则提取为低延迟基线；默认 `hybrid` 模式使用主模型严格 JSON 补充结构化候选，失败时自动保留规则结果；
 - semantic 记忆使用 `subject_key` 合并，同一主题的新事实把旧事实标记为 `superseded`；
 - episodic 默认带过期时间，过期或 superseded 记忆不进入运行时上下文；
 - 管理端支持按当前 Persona 查看、编辑和删除记忆。
 
-召回排序综合关键词相关度、importance、时间衰减和最近访问时间。第一版不依赖向量数据库，后续可在 Repository 后增加 embedding 实现而不修改 Runtime 接口。
+召回排序综合中文词法、概念主题、`subject_key`、importance、confidence 和时间衰减；同一主题在单轮结果中保持多样性，普通对话短期排除刚使用过的记忆，明确询问“还记得吗”时可绕过排除。第一版不依赖向量数据库，后续可在 Repository 后增加 embedding 实现而不修改 Runtime 接口。
+
+### 7.1 Response Planner 与动态示例
+
+每轮在调用 LLM 前生成结构化 ResponsePlan，包括 dialogue act、情绪语气、回复长度、提问策略、主动程度和记忆策略。Planner 当前覆盖安慰、边界、修复、接纳、共同计划、建议、直接回答、行动、轻松互动、回忆、倾听和一般接话。
+
+编译后的完整 Persona 示例会从常驻 Runtime Prompt 中移除，再由 `example_selector.py` 按用户消息、场景标签和 ResponsePlan 选择最多 3 条。最近使用过的示例短期排除；没有正相关示例时不注入示例，避免错场景模仿。
 
 ## 8. 工具调用与表现层
 

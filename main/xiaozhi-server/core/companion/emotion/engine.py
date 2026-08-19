@@ -18,6 +18,8 @@ class EmotionEngine:
         "user_showed_care": {"warmth": 0.05, "valence": 0.03},
         "user_expressed_gratitude": {"warmth": 0.03, "valence": 0.03},
         "user_expressed_exhaustion": {"warmth": 0.02, "arousal": -0.02},
+        "user_expressed_distress": {"valence": -0.06, "arousal": 0.03, "warmth": 0.02},
+        "user_expressed_joy": {"valence": 0.06, "arousal": 0.05, "warmth": 0.02},
         "user_insulted_companion": {"irritation": 0.10, "warmth": -0.05, "valence": -0.08},
         "user_apologized": {"irritation": -0.08, "warmth": 0.03, "valence": 0.02},
         "shared_plan_created": {"valence": 0.03, "arousal": 0.03},

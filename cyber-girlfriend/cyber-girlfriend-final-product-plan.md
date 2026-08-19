@@ -1,6 +1,6 @@
 # CyberGirlfriend 最终成品实施方案
 
-> 状态：Development Baseline v4.0
+> 状态：Development Baseline v4.1
 > 更新日期：2026-08-19
 > 适用仓库：`xiaozhi-esp32-server`
 > 目标：在现有小智服务端上形成可导入人物、持续建立关系、保存长期记忆、使用克隆音色的赛博女友产品闭环。
@@ -31,7 +31,7 @@
 - Voice Clone 沿用原模块，训练成功的音色可直接在角色配置中选择；
 - 部署文件已固定使用当前仓库构建的自定义镜像。
 
-四批优化已纳入实现基线：
+前四批配置与管理优化已纳入实现基线：
 
 - 三套记忆明确命名为“人物关系与记忆 / 旧版对话记忆 / 本地短记忆摘要”，切换旧版提供器不再删除数据；
 - Runtime 隔离键升级为 `user_id + agent_id + persona_id`，Persona 版本升级仍沿用同一状态；
@@ -40,6 +40,14 @@
 - 角色配置按人物、关系记忆、能力、声音、高级兼容五区展示，并显示保存/重启状态；
 - 人物记忆支持查看、编辑、删除、过期、去重和同主题新事实替换旧事实；
 - 关系支持冷却、降级和道歉修复，主动关心具备独立开关与频率调度。
+
+第五批“活人感”运行时优化也已完成：
+
+- 用户当轮情绪/关系信号在生成回复前形成预览状态，回复完成后去重并只提交一次；
+- Response Planner 每轮生成回应动作、语气、篇幅、提问和记忆使用策略，抑制通用 AI 套话；
+- 长期记忆默认采用规则 + 主模型严格 JSON 的混合抽取，模型不可用时自动保留规则基线；
+- 召回加入概念主题、词法、主题键、重要度、可信度与时间衰减，并支持承诺/待办和防重复召回；
+- Persona 示例不再整包常驻上下文，而是按当前场景最多选择 3 条并进行短期轮换。
 
 仍需在目标环境完成 MySQL 迁移、真实画廊导入、真实模型评审、TTS 供应商和 ESP32 设备验收。
 
@@ -301,15 +309,19 @@ Compiler 内部接口由 manager-api 使用 `server.secret` 生成 HMAC 签名�
 ```text
 before_turn
   -> resolve Persona
-  -> load state
-  -> retrieve memories
+  -> load and decay committed state
+  -> extract current-turn signals
+  -> build non-persistent preview state
+  -> semantic/concept memory recall + anti-repeat
+  -> Response Planner + situational examples
   -> build ephemeral context
   -> inject into LLM input
 
 after_turn
-  -> extract events
-  -> reduce emotion/relationship
-  -> generate memory candidates
+  -> rule + structured memory extraction
+  -> merge and deduplicate pre/post events
+  -> reduce emotion/relationship exactly once
+  -> generate facts, episodes, shared events and commitments
   -> commit with turn id + expected revision
   -> update TTS/presentation hints
 ```
@@ -319,13 +331,16 @@ after_turn
 
 ## 11. 鲜活人物感的组成
 
-第一版的人物感来自五个可验证组件：
+当前人物感来自以下可验证组件：
 
 1. 表达 DNA：口头禅、节奏、句长、调侃方式和禁止表达；
-2. 情绪状态：valence、arousal、warmth、irritation、fatigue，随事件变化并自然衰减；
-3. 关系状态：阶段与 trust/affection/intimacy/conflict 等内部状态；
-4. 长期记忆：事实、偏好、共同事件和关系事件，经筛选后进入上下文；
-5. 工具人格化：即时操作先短确认，信息工具结果保留事实后再按人物风格复述。
+2. 当轮信号：疲惫、低落、开心、关心、感谢、攻击、道歉、共同计划和重要倾诉会即时影响本轮回应；
+3. Response Planner：先决定安慰、边界、修复、倾听、回忆、建议或行动，再生成角色化文本；
+4. 情绪状态：valence、arousal、warmth、irritation、fatigue，随事件变化并自然衰减；
+5. 关系状态：阶段与 trust/affection/intimacy/conflict 等内部状态；
+6. 长期记忆：事实、偏好、共同事件、关系事件与承诺，经混合抽取和相关性筛选后进入上下文；
+7. 动态示例：只选择与当前对话场景相关的 Persona 示例，并避免连续复用同一示例；
+8. 工具人格化：即时操作先短确认，信息工具结果保留事实后再按人物风格复述。
 
 内部数值不直接展示给用户；管理端只显示关系阶段、有效轮次和记忆数量。
 
@@ -423,6 +438,9 @@ companion:
 - Session、Context Builder、State Reducer；
 - Emotion/Relationship；
 - Event/Memory；
+- 当前轮信号预览与单次状态提交；
+- Response Planner 与动态 Persona 示例；
+- 混合记忆抽取、概念召回、防复读和承诺生命周期；
 - SQLite/manager-api Repository；
 - 主对话链插入点和 fail-open。
 

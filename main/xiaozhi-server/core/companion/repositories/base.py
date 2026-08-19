@@ -24,5 +24,11 @@ class CompanionRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def search_memories(self, identity: CompanionIdentity, query: str, limit: int = 6) -> list[dict]:
+    async def search_memories(
+        self,
+        identity: CompanionIdentity,
+        query: str,
+        limit: int = 6,
+        exclude_ids: set[int | str] | None = None,
+    ) -> list[dict]:
         raise NotImplementedError

@@ -3,13 +3,16 @@ from datetime import datetime, timedelta, timezone
 
 from core.companion.emotion import EmotionEngine
 from core.companion.models import PersonaSpec
-from core.companion.event_extractor import RuleBasedEventExtractor
+from core.companion.event_extractor import LLMStructuredMemoryExtractor, RuleBasedEventExtractor
 from core.companion.manager import is_meaningful_turn
 from core.companion.overlay import effective_overlay, normalize_overlay, render_overlay
 from core.companion.privacy import is_safe_memory_text, sanitize_tool_output
 from core.companion.relationship import RelationshipEngine
+from core.companion.repositories.memory_ranking import rank_memories
+from core.companion.response_planner import ResponsePlanner
 from core.companion.state_models import (
     CompanionEvent,
+    CompanionState,
     CompanionTurnContext,
     CompletedTurn,
     EmotionState,
@@ -123,6 +126,83 @@ class CompanionContextTest(unittest.TestCase):
         values = {(item.subject_key, item.content) for item in memories}
         self.assertIn(("preference:咖啡", "用户现在不再偏好咖啡"), values)
         self.assertIn(("preference:红茶", "用户现在喜欢红茶"), values)
+
+    def test_commitment_is_extracted_with_subject_and_expiry(self):
+        turn = CompletedTurn(
+            "turn-commitment",
+            "明天我要交报告，记得提醒我检查附件",
+            "好，我明天会提醒你。",
+        )
+        _, memories = RuleBasedEventExtractor().extract(turn)
+        commitments = [item for item in memories if item.memory_type == "commitment"]
+        self.assertTrue(commitments)
+        self.assertTrue(all(item.subject_key.startswith("commitment:") for item in commitments))
+        self.assertTrue(all(item.expires_at for item in commitments))
+
+    def test_response_planner_uses_current_turn_signal(self):
+        planner = ResponsePlanner()
+        plan = planner.plan(
+            "我今天真的很难过",
+            CompanionState(),
+            [CompanionEvent("user_expressed_distress", 0.9)],
+            [],
+        )
+        self.assertEqual(plan.dialogue_act, "comfort")
+        self.assertEqual(plan.question_policy, "optional")
+        self.assertIn("不要立刻讲大道理", plan.render())
+
+        happy = planner.plan(
+            "我今天好开心",
+            CompanionState(),
+            [CompanionEvent("user_expressed_joy", 0.82)],
+            [],
+        )
+        weather = planner.plan("明天天气怎么样", CompanionState(), [], [])
+        self.assertEqual(happy.dialogue_act, "receive")
+        self.assertEqual(weather.dialogue_act, "answer")
+
+    def test_hybrid_extractor_merges_valid_structured_memory(self):
+        class FakeLlm:
+            def response_no_stream(self, system_prompt, user_prompt, **kwargs):
+                self.system_prompt = system_prompt
+                self.user_prompt = user_prompt
+                return (
+                    '[{"memory_type":"semantic","content":"用户通常周五远程办公",'
+                    '"importance":0.8,"confidence":0.9,"sensitivity":"personal",'
+                    '"subject_key":"work:remote"}]'
+                )
+
+        llm = FakeLlm()
+        extractor = RuleBasedEventExtractor(LLMStructuredMemoryExtractor(llm))
+        _, memories = extractor.extract(CompletedTurn("turn-hybrid", "我叫阿明", "记住了。"))
+        contents = [item.content for item in memories]
+        self.assertIn("用户希望被称为阿明", contents)
+        self.assertIn("用户通常周五远程办公", contents)
+        self.assertIn("assistant_message", llm.user_prompt)
+
+    def test_semantic_memory_ranking_understands_topic_aliases(self):
+        rows = [
+            {
+                "id": 1,
+                "memory_type": "semantic",
+                "subject_key": "preference:咖啡",
+                "content": "用户喜欢喝美式咖啡",
+                "importance": 0.7,
+                "confidence": 0.9,
+                "sensitivity": "personal",
+            },
+            {
+                "id": 2,
+                "memory_type": "semantic",
+                "subject_key": "identity:job",
+                "content": "用户的工作是设计师",
+                "importance": 0.9,
+                "confidence": 0.9,
+                "sensitivity": "personal",
+            },
+        ]
+        ranked = rank_memories(rows, "你记得我喜欢喝什么吗", 2)
+        self.assertEqual(ranked[0]["id"], 1)
 
     def test_meaningful_turn_excludes_trivial_and_tool_only_activity(self):
         trivial = CompletedTurn("trivial", "嗯", "我在。")

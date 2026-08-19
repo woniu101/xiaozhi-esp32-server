@@ -222,7 +222,7 @@ prompt_template: agent-base-prompt.txt
 companion:
   enabled: false
   # rules=纯规则低延迟；hybrid/llm=规则 + 主模型严格 JSON 结构化抽取。
-  memory_extraction_mode: rules
+  memory_extraction_mode: hybrid
   # 全模块人物库使用的安全编译接口；接口始终需要 manager-api.secret 的 HMAC 签名。
   persona_admin_enabled: true
   artifact_max_upload_mb: 10
