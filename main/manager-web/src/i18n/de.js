@@ -965,6 +965,7 @@ export default {
   'roleConfig.tts': 'TTS',
   'roleConfig.memoryHis': 'Lokale Kurzzeit-Zusammenfassung',
   'roleConfig.memory': 'Bisheriger Gesprächsspeicher',
+  'roleConfig.memoryAbbreviation': '(Mem)',
   'roleConfig.intent': 'Intent',
   'roleConfig.language': 'Sprache auswählen',
   'roleConfig.selectLanguage': 'Bitte Sprache auswählen',

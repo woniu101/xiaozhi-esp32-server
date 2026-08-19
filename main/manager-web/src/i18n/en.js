@@ -978,6 +978,7 @@ export default {
   'roleConfig.tts': 'Text-to-Speech',
   'roleConfig.memoryHis': 'Local Short-memory Summary',
   'roleConfig.memory': 'Legacy Conversation Memory',
+  'roleConfig.memoryAbbreviation': '(Mem)',
   'roleConfig.intent': 'Intent Recognition',
   'roleConfig.language': 'Select Language',
   'roleConfig.selectLanguage': 'Please select language',

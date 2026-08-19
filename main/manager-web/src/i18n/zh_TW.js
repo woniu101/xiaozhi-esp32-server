@@ -965,6 +965,7 @@ export default {
   'roleConfig.tts': '語音合成(TTS)',
   'roleConfig.memoryHis': '本機短記憶摘要',
   'roleConfig.memory': '舊版對話記憶',
+  'roleConfig.memoryAbbreviation': '(Mem)',
   'roleConfig.intent': '意圖識別(Intent)',
   'roleConfig.language': '選擇語言(Lang)',
   'roleConfig.selectLanguage': '請選擇語言',

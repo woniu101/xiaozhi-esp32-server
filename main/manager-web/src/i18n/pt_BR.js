@@ -965,6 +965,7 @@ export default {
   'roleConfig.intent': 'Reconhecimento de Intenção',
   'roleConfig.memoryHis': 'Resumo local de memória curta',
   'roleConfig.memory': 'Memória de conversa legada',
+  'roleConfig.memoryAbbreviation': '(Mem)',
   'roleConfig.tts': 'Texto para Fala',
   'roleConfig.language': 'Linguagem do diálogo',
   'roleConfig.selectLanguage': 'Por favor, selecione o idioma',

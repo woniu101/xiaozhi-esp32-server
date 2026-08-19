@@ -371,7 +371,11 @@
                     >
                       <template #label>
                         <el-tooltip :content="$t('roleConfig.tooltip.' + model.type.toLowerCase())" placement="top" effect="light" popper-class="custom-tooltip">
-                          <span>{{ $t('roleConfig.' + model.type.toLowerCase()) }}</span>
+                          <span v-if="model.type === 'Memory'" class="legacy-memory-label">
+                            <span>{{ $t('roleConfig.memory') }}</span>
+                            <span>{{ $t('roleConfig.memoryAbbreviation') }}</span>
+                          </span>
+                          <span v-else>{{ $t('roleConfig.' + model.type.toLowerCase()) }}</span>
                         </el-tooltip>
                       </template>
                       <div
@@ -2681,12 +2685,24 @@ export default {
 }
 
 .legacy-memory-item ::v-deep .el-form-item__label {
-  width: 94px !important;
-  white-space: nowrap;
+  line-height: 18px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
-.legacy-memory-item ::v-deep .el-form-item__content {
-  margin-left: 94px !important;
+.legacy-memory-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: 100%;
+  min-width: 0;
+}
+
+.legacy-memory-label > span {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .model-row {

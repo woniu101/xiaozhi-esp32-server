@@ -965,6 +965,7 @@ export default {
   'roleConfig.tts': 'Văn bản thành giọng nói',
   'roleConfig.memoryHis': 'Tóm tắt bộ nhớ ngắn cục bộ',
   'roleConfig.memory': 'Bộ nhớ hội thoại cũ',
+  'roleConfig.memoryAbbreviation': '(Mem)',
   'roleConfig.intent': 'Nhận dạng ý định',
   'roleConfig.language': 'Chọn ngôn ngữ',
   'roleConfig.selectLanguage': 'Vui lòng chọn ngôn ngữ',
