@@ -113,6 +113,12 @@ public class CompanionRuntimeServiceImpl implements CompanionRuntimeService {
             String memoryType = safeText(memory.getMemoryType(), "semantic", 32);
             String sensitivity = safeText(memory.getSensitivity(), "personal", 32);
             String subjectKey = safeNullableText(memory.getSubjectKey(), 190);
+            if ("forget".equalsIgnoreCase(memory.getOperation())) {
+                companionRuntimeDao.forgetMemories(
+                        request.getUserId(), request.getAgentId(), request.getPersonaId(),
+                        memoryType, subjectKey, normalizedHash);
+                continue;
+            }
             if (subjectKey != null) {
                 companionRuntimeDao.supersedeMemories(
                         request.getUserId(), request.getAgentId(), request.getPersonaId(),
@@ -144,7 +150,8 @@ public class CompanionRuntimeServiceImpl implements CompanionRuntimeService {
             }
         }
         companionRuntimeDao.insertTurn(
-                request.getTurnId(), request.getUserId(), request.getAgentId(), request.getPersonaId(), newRevision);
+                request.getTurnId(), request.getUserId(), request.getAgentId(), request.getPersonaId(), newRevision,
+                JsonUtils.toJsonString(request.getDiagnostic() == null ? Map.of() : request.getDiagnostic()));
         return "committed";
     }
 
@@ -218,6 +225,34 @@ public class CompanionRuntimeServiceImpl implements CompanionRuntimeService {
         summary.put("memoryCount", companionRuntimeDao.countMemories(userId, agentId, personaId));
         summary.put("personaId", personaId);
         return summary;
+    }
+
+    @Override
+    public Map<String, Object> getLatestDiagnostic(String userId, String agentId, String personaId) {
+        requireRuntimeIdentity(userId, agentId, personaId);
+        Map<String, Object> row = companionRuntimeDao.selectLatestDiagnostic(userId, agentId, personaId);
+        if (row == null) {
+            return Map.of();
+        }
+        Map<String, Object> result = jsonObject(row.get("diagnosticJson"));
+        result.put("turnId", row.get("turnId"));
+        result.put("createdAt", row.get("createdAt"));
+        return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void resetRelationship(
+            String userId, String agentId, String personaId, Long operatorUserId) {
+        requireRuntimeIdentity(userId, agentId, personaId);
+        companionRuntimeDao.lockAgent(agentId);
+        companionRuntimeDao.resetRelationship(userId, agentId, personaId);
+        companionRuntimeDao.insertAudit(
+                operatorUserId,
+                "companion_relationship_reset",
+                "agent",
+                agentId,
+                JsonUtils.toJsonString(Map.of("ownerUserId", userId, "personaId", personaId)));
     }
 
     @Override

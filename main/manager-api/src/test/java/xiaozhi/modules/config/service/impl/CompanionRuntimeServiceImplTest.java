@@ -37,7 +37,8 @@ class CompanionRuntimeServiceImplTest {
         CommitRequest request = request(2L, 3L);
         assertEquals("committed", service.commit(request));
 
-        verify(dao).insertTurn("turn-1", "user-1", "agent-1", "persona-1", 3L);
+        verify(dao).insertTurn(eq("turn-1"), eq("user-1"), eq("agent-1"), eq("persona-1"),
+                eq(3L), anyString());
         verify(dao).insertEvent(
                 anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyDouble());
         verify(dao).upsertMemory(
@@ -54,7 +55,8 @@ class CompanionRuntimeServiceImplTest {
         CompanionRuntimeServiceImpl service = new CompanionRuntimeServiceImpl(dao);
 
         assertEquals("conflict", service.commit(request(2L, 3L)));
-        verify(dao, never()).insertTurn(anyString(), anyString(), anyString(), anyString(), anyLong());
+        verify(dao, never()).insertTurn(
+                anyString(), anyString(), anyString(), anyString(), anyLong(), anyString());
         verify(dao, never()).insertEvent(
                 anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyDouble());
     }
@@ -83,6 +85,27 @@ class CompanionRuntimeServiceImplTest {
     }
 
     @Test
+    void forgetOperationDoesNotInsertANewMemory() {
+        CompanionRuntimeDao dao = mock(CompanionRuntimeDao.class);
+        when(dao.countRuntimeIdentity("user-1", "agent-1", "persona-1")).thenReturn(1);
+        when(dao.countTurn("turn-1")).thenReturn(0);
+        when(dao.selectRevisionForUpdate("user-1", "agent-1", "persona-1")).thenReturn(2L);
+        when(dao.updateState(anyString(), anyString(), anyString(), anyLong(), anyLong(), anyString(), anyString()))
+                .thenReturn(1);
+        CommitRequest request = request(2L, 3L);
+        request.getMemories().get(0).setSubjectKey("preference:咖啡");
+        request.getMemories().get(0).setOperation("forget");
+
+        new CompanionRuntimeServiceImpl(dao).commit(request);
+
+        verify(dao).forgetMemories(
+                "user-1", "agent-1", "persona-1", "semantic", "preference:咖啡", anyString());
+        verify(dao, never()).upsertMemory(
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), anyString(),
+                anyDouble(), anyDouble(), anyString(), any(), any(), anyString());
+    }
+
+    @Test
     void updateMemoryIsScopedAndAudited() {
         CompanionRuntimeDao dao = mock(CompanionRuntimeDao.class);
         when(dao.countRuntimeIdentity("user-1", "agent-1", "persona-1")).thenReturn(1);
@@ -108,6 +131,36 @@ class CompanionRuntimeServiceImplTest {
                 "user-1", "agent-1", "persona-1", 7L, 9L);
 
         verify(dao).insertAudit(eq(9L), eq("companion_memory_delete"), eq("memory"), eq("7"), anyString());
+    }
+
+    @Test
+    void resetRelationshipKeepsMemoriesAndAuditsTheChange() {
+        CompanionRuntimeDao dao = mock(CompanionRuntimeDao.class);
+        when(dao.countRuntimeIdentity("user-1", "agent-1", "persona-1")).thenReturn(1);
+
+        new CompanionRuntimeServiceImpl(dao).resetRelationship(
+                "user-1", "agent-1", "persona-1", 9L);
+
+        verify(dao).resetRelationship("user-1", "agent-1", "persona-1");
+        verify(dao, never()).deleteMemories(anyString(), anyString(), anyString());
+        verify(dao).insertAudit(eq(9L), eq("companion_relationship_reset"), eq("agent"),
+                eq("agent-1"), anyString());
+    }
+
+    @Test
+    void latestDiagnosticReturnsDecodedNonSensitiveTrace() {
+        CompanionRuntimeDao dao = mock(CompanionRuntimeDao.class);
+        when(dao.countRuntimeIdentity("user-1", "agent-1", "persona-1")).thenReturn(1);
+        when(dao.selectLatestDiagnostic("user-1", "agent-1", "persona-1")).thenReturn(Map.of(
+                "turnId", "turn-9",
+                "diagnosticJson", "{\"eventTypes\":[\"user_showed_care\"]}",
+                "createdAt", "2026-08-20T12:00:00"));
+
+        Map<String, Object> result = new CompanionRuntimeServiceImpl(dao)
+                .getLatestDiagnostic("user-1", "agent-1", "persona-1");
+
+        assertEquals("turn-9", result.get("turnId"));
+        assertEquals(List.of("user_showed_care"), result.get("eventTypes"));
     }
 
     @Test

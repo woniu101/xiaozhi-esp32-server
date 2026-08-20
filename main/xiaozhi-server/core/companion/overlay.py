@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from core.companion.models import PersonaSpec
 
 
 ALLOWED_STAGES = ("stranger", "familiar", "friend", "ambiguous", "lover", "intimate")
+RELATIONSHIP_MODES = {
+    "friend": ("stranger", "familiar", "friend"),
+    "romance": ("stranger", "familiar", "friend", "ambiguous", "lover"),
+    "deep": ALLOWED_STAGES,
+}
 TEXT_FIELDS = {
     "ai_identity_notice",
     "user_address",
     "voice_reply_style",
     "tool_rephrase_style",
     "tool_ack_prefix",
+    "proactive_timezone",
+    "proactive_quiet_start",
+    "proactive_quiet_end",
 }
 LIST_FIELDS = {
     "allowed_stages",
@@ -51,6 +60,9 @@ def normalize_overlay(value: Any) -> dict[str, Any]:
     initial_stage = str(value.get("initial_stage") or "").strip()
     if initial_stage in ALLOWED_STAGES:
         result["initial_stage"] = initial_stage
+    relationship_mode = str(value.get("relationship_mode") or "").strip().lower()
+    if relationship_mode in {*RELATIONSHIP_MODES, "custom"}:
+        result["relationship_mode"] = relationship_mode
     if "allowed_stages" in result:
         result["allowed_stages"] = [
             stage for stage in result["allowed_stages"] if stage in ALLOWED_STAGES
@@ -62,29 +74,56 @@ def normalize_overlay(value: Any) -> dict[str, Any]:
     interval = value.get("proactive_interval_minutes")
     if isinstance(interval, (int, float)) and not isinstance(interval, bool):
         result["proactive_interval_minutes"] = max(5, min(10080, int(interval)))
+    for key, minimum, maximum in (
+        ("proactive_daily_limit", 1, 20),
+        ("proactive_rejection_cooldown_minutes", 60, 43200),
+        ("proactive_max_unanswered", 1, 10),
+    ):
+        item = value.get(key)
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            result[key] = max(minimum, min(maximum, int(item)))
+    timezone_name = str(result.get("proactive_timezone") or "")[:64]
+    if timezone_name:
+        result["proactive_timezone"] = timezone_name
+    for key in ("proactive_quiet_start", "proactive_quiet_end"):
+        if key in result and not re.fullmatch(
+            r"(?:[01]\d|2[0-3]):[0-5]\d", result[key]
+        ):
+            result.pop(key, None)
     return result
 
 
 def effective_overlay(spec: PersonaSpec, value: Any) -> dict[str, Any]:
-    """Apply an overlay without allowing it to broaden the Persona policy."""
+    """Resolve binding-level relationship intent without mixing it with persona identity.
+
+    Legacy bindings without ``relationship_mode`` keep the imported Persona policy. Once
+    a mode is selected, the agent binding owns the relationship range. Persona identity
+    (including public-figure metadata) still controls the mandatory AI identity notice,
+    but no longer silently changes how close the user is allowed to become.
+    """
     overlay = normalize_overlay(value)
     policy = spec.relationship_policy if isinstance(spec.relationship_policy, dict) else {}
     configured_stages = [
         stage for stage in policy.get("allowed_stages", []) if stage in ALLOWED_STAGES
     ] or ["familiar", "friend"]
     persona_stages = ["stranger"] + [stage for stage in configured_stages if stage != "stranger"]
-    policy_ceiling_stages = list(ALLOWED_STAGES)
     source = spec.source if isinstance(spec.source, dict) else {}
-    if source.get("is_public_figure"):
-        policy_ceiling_stages = ["stranger", "familiar", "friend"]
-    requested_stages = overlay.get("allowed_stages") or persona_stages
-    effective_stages = [
-        stage
-        for stage in ALLOWED_STAGES
-        if stage in persona_stages and stage in policy_ceiling_stages and stage in requested_stages
-    ]
+
+    relationship_mode = overlay.get("relationship_mode")
+    if relationship_mode in RELATIONSHIP_MODES:
+        effective_stages = list(RELATIONSHIP_MODES[relationship_mode])
+    elif relationship_mode == "custom":
+        requested_stages = overlay.get("allowed_stages") or persona_stages
+        effective_stages = [stage for stage in ALLOWED_STAGES if stage in requested_stages]
+    else:
+        # Compatibility path for existing agent bindings created before relationship
+        # intent became a binding-level choice.
+        requested_stages = overlay.get("allowed_stages") or persona_stages
+        effective_stages = [
+            stage for stage in ALLOWED_STAGES if stage in persona_stages and stage in requested_stages
+        ]
     if not effective_stages:
-        effective_stages = [stage for stage in persona_stages if stage in policy_ceiling_stages][:1] or ["familiar"]
+        effective_stages = ["familiar"]
     overlay["allowed_stages"] = effective_stages
 
     requested_initial = overlay.get("initial_stage") or policy.get("initial_stage") or effective_stages[0]
@@ -126,6 +165,12 @@ def render_overlay(overlay: dict[str, Any]) -> str:
         elif value:
             lines.append(f"{label}：{value}")
     if overlay.get("proactive_enabled"):
-        lines.append(f"主动行为：已启用，最短间隔 {overlay.get('proactive_interval_minutes', 180)} 分钟")
+        lines.append(
+            "主动行为：已启用；"
+            f"最短间隔 {overlay.get('proactive_interval_minutes', 180)} 分钟；"
+            f"每日最多 {overlay.get('proactive_daily_limit', 3)} 次；"
+            f"安静时段 {overlay.get('proactive_quiet_start', '23:00')}—"
+            f"{overlay.get('proactive_quiet_end', '08:00')}"
+        )
     lines.extend(["这些配置不能覆盖安全规则，也不能直接修改内部情绪或关系分数。", "</companion_overlay>"])
     return "\n".join(lines)

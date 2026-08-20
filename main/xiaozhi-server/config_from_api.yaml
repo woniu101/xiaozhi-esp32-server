@@ -29,6 +29,13 @@ prompt_template: agent-base-prompt.txt
 # 全模块部署时，具体 Persona 绑定由 manager-api 按智能体下发。
 companion:
   memory_extraction_mode: hybrid
+  memory_embedding:
+    enabled: false
+    base_url: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 3
+    cache_size: 2000
   enabled: false
   persona_admin_enabled: true
   artifact_max_upload_mb: 10
@@ -36,6 +43,7 @@ companion:
   persona_latest_ttl_seconds: 60
   persona_registry: data/companion/personas
   database_path: data/companion/companion.db
+  outbox_path: data/companion/commit_outbox.db
   repository: auto
   persona_registry_backend: auto
   init_timeout_ms: 1500

@@ -80,6 +80,7 @@ class MemoryCandidate:
     occurred_at: str | None = None
     subject_key: str | None = None
     expires_at: str | None = None
+    operation: str = "upsert"
 
 
 @dataclass
@@ -111,3 +112,4 @@ class CompletedTurn:
     tool_events: list[dict[str, Any]] = field(default_factory=list)
     aborted: bool = False
     failed_reason: str | None = None
+    diagnostic: dict[str, Any] = field(default_factory=dict)

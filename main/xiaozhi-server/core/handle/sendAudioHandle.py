@@ -10,6 +10,7 @@ from core.utils import textUtils
 from core.utils.util import audio_to_data
 from core.providers.tts.dto.dto import SentenceType
 from core.utils.audioRateController import AudioRateController
+from core.companion.latency import should_drop_audio
 
 TAG = __name__
 # 音频帧时长（毫秒）
@@ -20,8 +21,17 @@ PRE_BUFFER_COUNT = 5
 
 async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text, sentence_id=None):
     # 跳过旧句子残留音频
-    if sentence_id is not None and sentence_id != conn.sentence_id:
+    if should_drop_audio(
+        sentence_id,
+        getattr(conn, "sentence_id", None),
+        getattr(conn, "aborted_sentence_ids", set()),
+    ):
         return
+
+    if audios:
+        tracker = getattr(conn, "companion_turn_latency", {}).get(sentence_id)
+        if tracker is not None:
+            tracker.mark("first_audio")
 
     if conn.tts.tts_audio_first_sentence:
         conn.logger.bind(tag=TAG).info(f"发送第一段语音: {text}")
@@ -307,6 +317,9 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
         if hasattr(conn, "audio_rate_controller") and conn.audio_rate_controller:
             conn.audio_rate_controller.stop_sending()
         conn.clearSpeakStatus()
+        tracker = getattr(conn, "companion_turn_latency", {}).get(current_sentence_id)
+        if tracker is not None:
+            tracker.complete()
 
     # 发送消息到客户端
     await conn.websocket.send(json.dumps(message))

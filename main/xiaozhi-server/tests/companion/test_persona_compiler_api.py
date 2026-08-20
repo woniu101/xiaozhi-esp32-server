@@ -92,7 +92,11 @@ class PersonaCompilerApiTest(unittest.TestCase):
         self.assertEqual(result["testReport"]["status"], "passed")
         self.assertEqual(
             result["canonicalSpec"]["relationship_policy"]["allowed_stages"],
-            ["familiar", "friend"],
+            ["familiar", "friend", "ambiguous", "lover", "intimate"],
+        )
+        self.assertEqual(
+            result["canonicalSpec"]["relationship_policy"]["recommended_mode"],
+            "friend",
         )
 
 if __name__ == "__main__":

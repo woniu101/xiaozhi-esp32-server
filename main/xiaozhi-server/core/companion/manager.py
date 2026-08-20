@@ -70,6 +70,16 @@ class CompanionManager:
     ) -> CompanionTurnContext:
         started = perf_counter()
         try:
+            if session.commit_pending:
+                try:
+                    refreshed = await self.repository.get_state(session.identity)
+                    if refreshed.revision >= session.state.revision:
+                        session.state = refreshed
+                    session.commit_pending = await self.repository.has_pending_commits(
+                        session.identity
+                    )
+                except Exception:
+                    metrics.increment("companion_outbox_state_refresh_failed_total")
             session.state = self.reducer.decay(session.state)
             events = self.extractor.extract_pre_turn(user_message)
             allowed = session.overlay.get("allowed_stages") or session.persona_spec.relationship_policy.get("allowed_stages")
@@ -78,7 +88,7 @@ class CompanionManager:
                 session.turn_preview_state = preview_state
                 session.turn_preview_events = events
                 session.pending_pre_turn_events[turn_id or "__latest__"] = events
-            return await self.context_builder.build(
+            context = await self.context_builder.build(
                 session,
                 user_message,
                 state=preview_state,
@@ -86,11 +96,25 @@ class CompanionManager:
                 turn_id=turn_id,
                 track_turn=track_turn,
             )
+            if track_turn:
+                session.pending_turn_diagnostics[turn_id or "__latest__"] = {
+                    "personaId": session.identity.persona_id,
+                    "personaVersion": session.identity.persona_version,
+                    "relationshipMode": session.overlay.get("relationship_mode", "legacy"),
+                    "stateBefore": session.state.to_dict(),
+                    "previewState": preview_state.to_dict(),
+                    "responsePlan": context.metadata.get("response_plan", {}),
+                    "recalledMemoryIds": context.metadata.get("recalled_memory_ids", []),
+                    "selectedExampleIds": context.metadata.get("selected_example_ids", []),
+                    "contextBuildMs": round((perf_counter() - started) * 1000, 3),
+                }
+            return context
         except Exception:
             if track_turn:
                 self._clear_turn_preview(session)
                 session.pending_pre_turn_events.pop(turn_id or "__latest__", None)
                 session.pending_recalled_memories.pop(turn_id or "__latest__", None)
+                session.pending_turn_diagnostics.pop(turn_id or "__latest__", None)
             raise
         finally:
             metrics.observe_ms("companion_before_turn_latency_ms", (perf_counter() - started) * 1000)
@@ -99,6 +123,8 @@ class CompanionManager:
         started = perf_counter()
         pre_turn_events = self._pop_turn_value(session.pending_pre_turn_events, turn.turn_id)
         recalled_memories = self._pop_turn_value(session.pending_recalled_memories, turn.turn_id)
+        diagnostic_value = self._pop_turn_value(session.pending_turn_diagnostics, turn.turn_id)
+        diagnostic = diagnostic_value if isinstance(diagnostic_value, dict) else {}
         if turn.aborted or turn.failed_reason:
             events, memories = [], []
         else:
@@ -122,6 +148,26 @@ class CompanionManager:
         for _ in range(3):
             expected_revision = session.state.revision
             new_state = self.reducer.reduce(session.state, events, meaningful, allowed)
+            commit_diagnostic = {
+                **diagnostic,
+                **(turn.diagnostic if isinstance(turn.diagnostic, dict) else {}),
+                "turnId": turn.turn_id,
+                "aborted": bool(turn.aborted),
+                "failed": bool(turn.failed_reason),
+                "meaningfulTurn": meaningful,
+                "allowedStages": list(allowed or []),
+                "eventTypes": [event.event_type for event in events],
+                "memoryCandidates": [
+                    {
+                        "type": item.memory_type,
+                        "subjectKey": item.subject_key,
+                        "operation": item.operation,
+                    }
+                    for item in memories
+                ],
+                "stateAfter": new_state.to_dict(),
+                "postProcessMs": round((perf_counter() - started) * 1000, 3),
+            }
             try:
                 result = await self.repository.commit_turn(
                     session.identity,
@@ -130,12 +176,17 @@ class CompanionManager:
                     new_state,
                     events,
                     memories,
+                    commit_diagnostic,
                 )
             except Exception:
                 self._clear_turn_preview(session)
                 raise
             if result == "committed":
                 session.state = new_state
+                opening = re.sub(r"\s+", " ", turn.assistant_message).strip()[:80]
+                if opening:
+                    session.recent_reply_openings.append(opening)
+                    del session.recent_reply_openings[:-3]
                 self._clear_turn_preview(session)
                 for memory in memories:
                     metrics.increment(
@@ -144,6 +195,16 @@ class CompanionManager:
                         sensitivity=memory.sensitivity,
                     )
                 metrics.observe_ms("companion_after_turn_latency_ms", (perf_counter() - started) * 1000)
+                return
+            if result == "queued":
+                session.commit_pending = True
+                self._clear_turn_preview(session)
+                metrics.increment("companion_commit_queued_total")
+                metrics.observe_ms(
+                    "companion_after_turn_latency_ms",
+                    (perf_counter() - started) * 1000,
+                    status="queued",
+                )
                 return
             if result == "duplicate":
                 session.state = await self.repository.get_state(session.identity)

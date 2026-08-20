@@ -223,6 +223,14 @@ companion:
   enabled: false
   # rules=纯规则低延迟；hybrid/llm=规则 + 主模型严格 JSON 结构化抽取。
   memory_extraction_mode: hybrid
+  # 可选 OpenAI-compatible Embedding；关闭时继续使用关键词与概念召回。
+  memory_embedding:
+    enabled: false
+    base_url: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 3
+    cache_size: 2000
   # 全模块人物库使用的安全编译接口；接口始终需要 manager-api.secret 的 HMAC 签名。
   persona_admin_enabled: true
   artifact_max_upload_mb: 10
@@ -235,6 +243,8 @@ companion:
   agent_id: ""
   persona_registry: data/companion/personas
   database_path: data/companion/companion.db
+  # manager-api 暂时不可用时，待提交的关系事件和记忆会写入该本地持久队列
+  outbox_path: data/companion/commit_outbox.db
   # auto: manager-api 模式使用 MySQL，单体模式使用 SQLite。
   repository: auto
   # 可独立回退为 filesystem；不会改变 State/Memory 的 manager-api 真源。

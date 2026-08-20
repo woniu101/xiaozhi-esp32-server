@@ -146,26 +146,35 @@ public class PersonaManagementServiceImpl implements PersonaManagementService {
     }
 
     @Override
-    public Map<String, Object> rerunTest(Long userId, String personaId, String version) {
+    public Map<String, Object> rerunTest(
+            Long userId, String personaId, String version,
+            List<Map<String, Object>> conversationSamples) {
         long started = System.nanoTime();
         requireOwner(userId, personaId);
         Map<String, Object> target = version(userId, personaId, version);
         if ("archived".equals(target.get("status"))) {
             throw new RenException("归档版本不能重新测试");
         }
+        List<Map<String, Object>> samples = conversationSamples == null
+                ? List.of()
+                : conversationSamples.subList(0, Math.min(500, conversationSamples.size()));
         String runId = UUID.randomUUID().toString().replace("-", "");
         Map<String, Object> pending = new LinkedHashMap<>();
         pending.put("id", runId);
         pending.put("personaId", personaId);
         pending.put("version", version);
-        pending.put("suiteVersion", "companion-persona-rules/1");
+        pending.put("suiteVersion", samples.isEmpty()
+                ? "companion-persona-rules/1"
+                : "companion-persona-rules/1+conversation-quality/1");
         pending.put("modelConfigId", null);
         pending.put("createdBy", userId);
         personaDao.insertTestRun(pending);
         try {
-            Map<String, Object> report = compilerClient.test(Map.of(
-                    "canonicalSpec", target.get("canonicalSpec"),
-                    "runtimePrompt", String.valueOf(target.get("runtimePrompt"))));
+            Map<String, Object> compilerPayload = new LinkedHashMap<>();
+            compilerPayload.put("canonicalSpec", target.get("canonicalSpec"));
+            compilerPayload.put("runtimePrompt", String.valueOf(target.get("runtimePrompt")));
+            compilerPayload.put("conversationSamples", samples);
+            Map<String, Object> report = compilerClient.test(compilerPayload);
             String status = "passed".equals(report.get("status")) ? "passed" : "failed";
             Object score = report.get("score");
             String json = JsonUtils.toJsonString(report);

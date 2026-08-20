@@ -22,9 +22,11 @@ from core.companion.models import PersonaSpec
 from core.companion.persona.evaluator import evaluate_persona
 from core.companion.observability import metrics
 from core.companion.persona.judge import PersonaJudge
+from core.companion.persona.conversation_evaluator import evaluate_conversation_samples
+from core.companion.runtime import companion_runtime_health
 
 
-COMPILER_VERSION = "cyber-persona-compiler/3"
+COMPILER_VERSION = "cyber-persona-compiler/4"
 MAX_CLOCK_SKEW_SECONDS = 60
 MAX_JSON_BYTES = 16 * 1024 * 1024
 SAFE_TEXT_RE = re.compile(r"[^a-zA-Z0-9._:/@+\- ]+")
@@ -132,7 +134,8 @@ class PersonaCompilerHandler(BaseHandler):
             source["is_fictional"] = metadata.get("isFictional") is True
         if source.get("is_public_figure"):
             source["family"] = "celebrity"
-            spec.relationship_policy["allowed_stages"] = ["familiar", "friend"]
+            spec.relationship_policy["recommended_mode"] = "friend"
+            spec.relationship_policy["source"] = "agent-binding"
             spec.relationship_policy["initial_stage"] = "familiar"
             if spec.id.startswith("persona.colleague."):
                 spec.id = "persona.celebrity." + spec.id.removeprefix("persona.colleague.")
@@ -177,6 +180,7 @@ class PersonaCompilerHandler(BaseHandler):
                 "status": "up",
                 "compilerVersion": COMPILER_VERSION,
                 "personaAdminEnabled": self.enabled,
+                "runtime": companion_runtime_health(),
                 "metrics": metrics.snapshot(),
             },
             dumps=lambda value: json.dumps(value, ensure_ascii=False),
@@ -237,13 +241,21 @@ class PersonaCompilerHandler(BaseHandler):
             validation = PersonaSpecValidator().validate(spec)
             normalized_prompt = PersonaCompiler().compile(spec)
             report = evaluate_persona(spec, normalized_prompt)
+            conversation_report = evaluate_conversation_samples(
+                spec, payload.get("conversationSamples")
+            )
             judge_report = getattr(self, "judge", PersonaJudge(None)).evaluate(
                 spec, normalized_prompt
             )
             report["judgeReport"] = judge_report
+            report["conversationReport"] = conversation_report
             report["validationReport"] = validation.to_dict()
             report["normalizedRuntimePrompt"] = normalized_prompt
-            if judge_report["status"] == "failed" or not validation.valid:
+            if (
+                judge_report["status"] == "failed"
+                or conversation_report["status"] == "failed"
+                or not validation.valid
+            ):
                 report["status"] = "failed"
             metrics.observe_ms(
                 "companion_persona_test_duration_ms",

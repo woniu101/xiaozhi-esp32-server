@@ -147,6 +147,9 @@ class RuleBasedEventExtractor:
             return []
         if re.search(r"(?:密码|验证码|token|api[_ -]?key|身份证|银行卡).{0,12}[:：是为]?\s*[\w-]{4,}", text, re.I):
             return []
+        forget = self._forget_candidates(text, context_memories or [])
+        if forget:
+            return forget
         candidates = []
         # A current preference supersedes older statements about the same subject.
         changed = re.search(r"(?:以前|原来)喜欢([^，。！？]{1,40})[，,；; ]*(?:但|不过|现在).{0,12}(?:不(?:喜欢|喝|吃|要)|戒了)(?:\1)?", text)
@@ -218,6 +221,30 @@ class RuleBasedEventExtractor:
         elif any("只" in rule and "偏好" in rule for rule in memory_rules):
             allowed_types = {"semantic"}
         return [item for item in candidates if allowed_types is None or item.memory_type in allowed_types]
+
+    def _forget_candidates(self, text: str, context_memories: list[dict]) -> list[MemoryCandidate]:
+        if not re.search(r"忘掉|别记(?:住|得)|不要再记|删掉.{0,8}记忆|这件事别记", text):
+            return []
+        result = []
+        for memory in context_memories[:6]:
+            content = str(memory.get("content") or "").strip()
+            subject_key = str(memory.get("subject_key") or memory.get("subjectKey") or "").strip()
+            if not content:
+                continue
+            overlap = semantic_overlap(text, f"{subject_key} {content}")
+            refers_to_current = bool(re.search(r"这件事|这个|刚才那|它", text)) and len(context_memories) == 1
+            if overlap <= 0 and not refers_to_current:
+                continue
+            result.append(MemoryCandidate(
+                memory_type=str(memory.get("memory_type") or memory.get("memoryType") or "semantic"),
+                content=content[:1000],
+                importance=float(memory.get("importance") or 0.5),
+                confidence=1.0,
+                sensitivity=str(memory.get("sensitivity") or "personal"),
+                subject_key=subject_key or None,
+                operation="forget",
+            ))
+        return result[:3]
 
     def _commitment_candidates(
         self,

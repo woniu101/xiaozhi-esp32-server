@@ -25,6 +25,7 @@ import xiaozhi.common.utils.Result;
 import xiaozhi.modules.persona.dto.PersonaManagementDTO.PublishRequest;
 import xiaozhi.modules.persona.dto.PersonaManagementDTO.UrlImportRequest;
 import xiaozhi.modules.persona.dto.PersonaManagementDTO.FilesystemMigrationRequest;
+import xiaozhi.modules.persona.dto.PersonaManagementDTO.ConversationTestRequest;
 import xiaozhi.modules.persona.service.PersonaImportService;
 import xiaozhi.modules.persona.service.PersonaGalleryService;
 import xiaozhi.modules.persona.service.PersonaManagementService;
@@ -171,9 +172,12 @@ public class PersonaController {
     @PostMapping("/{personaId}/versions/{version}/test")
     public Result<Map<String, Object>> rerunTest(
             @PathVariable("personaId") String personaId,
-            @PathVariable("version") String version) {
+            @PathVariable("version") String version,
+            @RequestBody(required = false) ConversationTestRequest request) {
         return new Result<Map<String, Object>>().ok(
-                managementService.rerunTest(SecurityUser.getUserId(), personaId, version));
+                managementService.rerunTest(
+                        SecurityUser.getUserId(), personaId, version,
+                        request == null ? List.of() : request.getConversationSamples()));
     }
 
     @GetMapping("/{personaId}/versions/{version}/tests")

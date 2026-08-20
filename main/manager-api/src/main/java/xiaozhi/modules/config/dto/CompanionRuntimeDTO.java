@@ -35,6 +35,7 @@ public final class CompanionRuntimeDTO {
         private Map<String, Object> state;
         private List<EventItem> events;
         private List<MemoryItem> memories;
+        private Map<String, Object> diagnostic;
     }
 
     @Data
@@ -60,6 +61,7 @@ public final class CompanionRuntimeDTO {
         private String sensitivity;
         private String occurredAt;
         private String expiresAt;
+        private String operation;
     }
 
     @Data

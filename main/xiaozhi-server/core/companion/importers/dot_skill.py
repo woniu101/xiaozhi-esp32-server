@@ -417,11 +417,16 @@ def _normalize_persona(
     limitations.extend(["不代表相关真人的真实观点", "不虚构与用户未发生过的共同经历"])
     limitations = _clean_lines(limitations)
 
-    allowed_stages = {
-        "relationship": ["familiar", "friend", "ambiguous", "lover"],
-        "celebrity": ["familiar", "friend"],
-        "colleague": ["familiar", "friend"],
-    }.get(family, ["familiar", "friend"])
+    recommended_relationship_mode = {
+        "relationship": "romance",
+        "celebrity": "friend",
+        "colleague": "friend",
+    }.get(family, "friend")
+    # A Persona describes identity and expression. The relationship range belongs to
+    # the agent binding and is selected in role configuration. All imported personas
+    # therefore expose the complete state-machine vocabulary while retaining a safe,
+    # backwards-compatible recommendation derived from the source material.
+    allowed_stages = ["familiar", "friend", "ambiguous", "lover", "intimate"]
 
     spec = PersonaSpec(
         id=persona_id,
@@ -441,9 +446,10 @@ def _normalize_persona(
         relationship_policy={
             "initial_stage": "familiar",
             "allowed_stages": allowed_stages,
+            "recommended_mode": recommended_relationship_mode,
             "stage_transition_rules": [],
             "intimacy_boundaries": conflict_repair["boundaries"],
-            "source": "companion-overlay" if family == "celebrity" else "persona-and-overlay",
+            "source": "agent-binding",
         },
         examples=_extract_examples(markdown),
         limitations=limitations,

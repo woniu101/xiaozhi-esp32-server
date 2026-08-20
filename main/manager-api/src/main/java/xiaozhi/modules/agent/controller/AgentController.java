@@ -207,6 +207,20 @@ public class AgentController {
                         String.valueOf(agent.getUserId()), id, agent.getPersonaId()));
     }
 
+    @GetMapping("/{id}/companion/diagnostic")
+    @Operation(summary = "获取 Companion 最近一轮非敏感诊断")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Map<String, Object>> getCompanionDiagnostic(@PathVariable("id") String id) {
+        requireAgentPermission(id);
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isBlank(agent.getPersonaId())) {
+            return new Result<Map<String, Object>>().ok(Map.of());
+        }
+        return new Result<Map<String, Object>>().ok(
+                companionRuntimeService.getLatestDiagnostic(
+                        String.valueOf(agent.getUserId()), id, agent.getPersonaId()));
+    }
+
     @GetMapping("/{id}/companion/memories")
     @Operation(summary = "查看当前 Persona 的 Companion 记忆")
     @RequiresPermissions("sys:role:normal")
@@ -273,6 +287,24 @@ public class AgentController {
         if (StringUtils.isNotBlank(agent.getPersonaId())) {
             companionRuntimeService.reset(
                     String.valueOf(agent.getUserId()), id, agent.getPersonaId(), operatorUserId);
+        }
+        return new Result<Void>().ok(null);
+    }
+
+    @DeleteMapping("/{id}/companion/relationship")
+    @Operation(summary = "仅重置 Companion 关系状态，保留人物记忆")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> resetCompanionRelationship(
+            @PathVariable("id") String id,
+            @RequestParam("confirmAgentId") String confirmAgentId) {
+        requireAgentPermission(id);
+        if (!id.equals(confirmAgentId)) {
+            throw new RenException(ErrorCode.PARAMS_GET_ERROR);
+        }
+        AgentInfoVO agent = agentService.getAgentById(id);
+        if (StringUtils.isNotBlank(agent.getPersonaId())) {
+            companionRuntimeService.resetRelationship(
+                    String.valueOf(agent.getUserId()), id, agent.getPersonaId(), SecurityUser.getUserId());
         }
         return new Result<Void>().ok(null);
     }

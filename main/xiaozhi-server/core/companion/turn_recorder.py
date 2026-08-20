@@ -17,6 +17,8 @@ class TurnRecorder:
         self._tool_events: list[dict[str, Any]] = []
         self._aborted = False
         self._failed_reason: str | None = None
+        self.transport_id: str | None = None
+        self._diagnostic: dict[str, Any] = {}
         self._finalized = False
         self._result: CompletedTurn | None = None
         self._lock = threading.Lock()
@@ -43,6 +45,13 @@ class TurnRecorder:
             if not self._finalized:
                 self._failed_reason = reason
 
+    def add_diagnostic(self, value: dict[str, Any] | None):
+        if not isinstance(value, dict):
+            return
+        with self._lock:
+            if not self._finalized:
+                self._diagnostic.update(value)
+
     def finalize(self) -> CompletedTurn:
         with self._lock:
             if self._result is None:
@@ -54,5 +63,6 @@ class TurnRecorder:
                     tool_events=list(self._tool_events),
                     aborted=self._aborted,
                     failed_reason=self._failed_reason,
+                    diagnostic=dict(self._diagnostic),
                 )
             return self._result

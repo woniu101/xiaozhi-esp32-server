@@ -81,8 +81,8 @@ export default {
   archive(personaId, version, callback, onFailure) {
     request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/archive`, {}, callback, onFailure)
   },
-  rerunTest(personaId, version, callback, onFailure) {
-    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/test`, {}, callback, onFailure)
+  rerunTest(personaId, version, conversationSamples, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/test`, { conversationSamples: conversationSamples || [] }, callback, onFailure)
   },
   testRuns(personaId, version, callback, onFailure) {
     request('GET', `/persona/${encoded(personaId)}/versions/${encoded(version)}/tests`, undefined, callback, onFailure)

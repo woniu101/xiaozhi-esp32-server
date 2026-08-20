@@ -68,6 +68,27 @@ class CompanionRuntimeTest(unittest.TestCase):
     def test_turn_is_idempotent(self):
         asyncio.run(self._turn_is_idempotent())
 
+    def test_queued_commit_is_marked_for_refresh_without_advancing_cached_state(self):
+        asyncio.run(self._queued_commit_is_marked_for_refresh_without_advancing_cached_state())
+
+    async def _queued_commit_is_marked_for_refresh_without_advancing_cached_state(self):
+        session = await self.manager.open_session(self.identity, "session-queued")
+        original_commit = self.repository.commit_turn
+
+        async def queued_commit(*args, **kwargs):
+            return "queued"
+
+        self.repository.commit_turn = queued_commit
+        try:
+            recorder = TurnRecorder("谢谢你", "turn-queued")
+            recorder.append_assistant_chunk("不用谢。")
+            await self.manager.after_turn(session, recorder.finalize())
+        finally:
+            self.repository.commit_turn = original_commit
+
+        self.assertTrue(session.commit_pending)
+        self.assertEqual(session.state.revision, 0)
+
     async def _turn_is_idempotent(self):
         session = await self.manager.open_session(self.identity, "session-1")
         recorder = TurnRecorder("谢谢你", "same-turn")

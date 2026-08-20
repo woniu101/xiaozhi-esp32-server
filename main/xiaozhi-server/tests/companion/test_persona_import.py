@@ -250,7 +250,8 @@ description: 童锦程视角：以情感内容创作者的思维框架看待人�
             self.assertEqual(result.spec.source["family"], "colleague")
             self.assertEqual(result.spec.core_rules[0]["rule"], "先问清楚背景")
             self.assertNotIn("这部分不得进入陪伴人格", str(result.spec.to_dict()))
-            self.assertEqual(result.spec.relationship_policy["allowed_stages"], ["familiar", "friend"])
+            self.assertEqual(result.spec.relationship_policy["recommended_mode"], "friend")
+            self.assertIn("intimate", result.spec.relationship_policy["allowed_stages"])
 
     def test_gallery_public_figure_persona_mode_is_normalized(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -274,7 +275,8 @@ description: 童锦程视角：以情感内容创作者的思维框架看待人�
             self.assertEqual(result.spec.source["family"], "celebrity")
             self.assertTrue(result.spec.source["is_real_person"])
             self.assertTrue(result.spec.source["is_public_figure"])
-            self.assertEqual(result.spec.relationship_policy["allowed_stages"], ["familiar", "friend"])
+            self.assertEqual(result.spec.relationship_policy["recommended_mode"], "friend")
+            self.assertIn("intimate", result.spec.relationship_policy["allowed_stages"])
 
     def test_real_person_can_be_published_after_validation(self):
         with tempfile.TemporaryDirectory() as temp:

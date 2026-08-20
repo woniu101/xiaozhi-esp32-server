@@ -1,5 +1,6 @@
 package xiaozhi.modules.persona.dto;
 
+import java.util.List;
 import java.util.Map;
 
 import jakarta.validation.constraints.NotBlank;
@@ -28,6 +29,11 @@ public final class PersonaManagementDTO {
         private Map<String, Object> canonicalSpec;
         @NotBlank
         private String runtimePrompt;
+    }
+
+    @Data
+    public static class ConversationTestRequest {
+        private List<Map<String, Object>> conversationSamples;
     }
 
     @Data

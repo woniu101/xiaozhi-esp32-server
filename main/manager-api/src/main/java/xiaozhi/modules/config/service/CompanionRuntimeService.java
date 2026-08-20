@@ -22,5 +22,9 @@ public interface CompanionRuntimeService {
 
     Map<String, Object> getSummary(String userId, String agentId, String personaId);
 
+    Map<String, Object> getLatestDiagnostic(String userId, String agentId, String personaId);
+
+    void resetRelationship(String userId, String agentId, String personaId, Long operatorUserId);
+
     void reset(String userId, String agentId, String personaId, Long operatorUserId);
 }

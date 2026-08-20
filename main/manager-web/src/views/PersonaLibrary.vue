@@ -191,10 +191,11 @@
         <el-table-column prop="status" :label="$t('persona.status')" width="100" />
         <el-table-column prop="qualityScore" :label="$t('persona.score')" width="90" />
         <el-table-column prop="testStatus" :label="$t('persona.test')" width="100" />
-        <el-table-column :label="$t('persona.actions')" width="310">
+        <el-table-column :label="$t('persona.actions')" width="360">
           <template slot-scope="scope">
             <el-button type="text" @click="viewVersion(scope.row)">{{ $t('persona.preview') }}</el-button>
             <el-button v-if="detail.owned" type="text" :loading="scope.row._testing" @click="rerunTest(scope.row)">{{ $t('persona.rerunTest') }}</el-button>
+            <el-button v-if="detail.owned" type="text" @click="openConversationTest(scope.row)">{{ $t('persona.conversationTest') }}</el-button>
             <el-button v-if="detail.owned && scope.row.status !== 'published' && scope.row.status !== 'archived'" type="text" @click="publishVersion(scope.row)">{{ $t('persona.publish') }}</el-button>
             <el-button v-if="detail.owned && scope.row.status === 'published' && detail.publishedVersion !== scope.row.version" type="text" @click="rollbackVersion(scope.row)">{{ $t('persona.rollback') }}</el-button>
             <el-button v-if="detail.owned && detail.publishedVersion !== scope.row.version" type="text" class="danger" @click="archiveVersion(scope.row)">{{ $t('persona.archive') }}</el-button>
@@ -223,6 +224,18 @@
         <el-table-column :label="$t('persona.before')"><template slot-scope="scope"><pre class="diff-value">{{ pretty(scope.row.before) }}</pre></template></el-table-column>
         <el-table-column :label="$t('persona.after')"><template slot-scope="scope"><pre class="diff-value">{{ pretty(scope.row.after) }}</pre></template></el-table-column>
       </el-table>
+    </el-dialog>
+    <el-dialog :title="$t('persona.conversationTest')" :visible.sync="conversationTestDialog" width="760px">
+      <el-alert type="info" :closable="false" show-icon :title="$t('persona.conversationTestHint')" />
+      <el-input v-model="conversationSamplesJson" type="textarea" :rows="13"
+        class="conversation-samples" :placeholder="$t('persona.conversationTestPlaceholder')" />
+      <pre v-if="conversationTestReport" class="conversation-report">{{ pretty(conversationTestReport) }}</pre>
+      <span slot="footer">
+        <el-button @click="conversationTestDialog = false">{{ $t('button.cancel') }}</el-button>
+        <el-button type="primary" :loading="conversationTestRunning" @click="runConversationTest">
+          {{ $t('persona.runConversationTest') }}
+        </el-button>
+      </span>
     </el-dialog>
     <el-dialog :title="$t('persona.chooseAgent')" :visible.sync="agentDialog" width="500px">
       <el-select v-model="selectedAgentId" filterable style="width:100%" :placeholder="$t('persona.chooseAgentHint')">
@@ -259,6 +272,8 @@ export default {
       versionDialog: false, versionDetail: {},
       agentDialog: false, agents: [], selectedAgentId: '', bindingPersonaId: '',
       diffFrom: '', diffTo: '', diffDialog: false, diffResult: {},
+      conversationTestDialog: false, conversationTestRow: null,
+      conversationSamplesJson: '', conversationTestRunning: false, conversationTestReport: null,
       auditItems: []
     }
   },
@@ -408,9 +423,36 @@ export default {
     showDiff() { Api.persona.diff(this.detail.personaId, this.diffFrom, this.diffTo, (response) => { this.diffResult = this.ok(response) || {}; this.diffDialog = true }) },
     rerunTest(row) {
       this.$set(row, '_testing', true)
-      Api.persona.rerunTest(this.detail.personaId, row.version, (response) => {
+      Api.persona.rerunTest(this.detail.personaId, row.version, [], (response) => {
         this.$set(row, '_testing', false); const report = this.ok(response) || {}; this.$message[report.status === 'passed' ? 'success' : 'warning'](this.$t(report.status === 'passed' ? 'persona.testPassed' : 'persona.testFailed')); this.showDetail(this.detail)
       }, () => this.$set(row, '_testing', false))
+    },
+    openConversationTest(row) {
+      this.conversationTestRow = row
+      this.conversationTestReport = null
+      this.conversationSamplesJson = '[\n  {\n    "scene": "安慰",\n    "user": "今天有点累",\n    "assistant": "那先歇一会儿，别硬撑。",\n    "expected": { "maxQuestions": 0, "forbidden": ["作为AI"] }\n  }\n]'
+      this.conversationTestDialog = true
+    },
+    runConversationTest() {
+      let samples
+      try {
+        samples = JSON.parse(this.conversationSamplesJson)
+        if (!Array.isArray(samples) || samples.length === 0 || samples.length > 500
+          || samples.some(item => !item || typeof item !== 'object' || Array.isArray(item))) {
+          throw new TypeError('invalid samples')
+        }
+      } catch (error) {
+        return this.$message.error(this.$t('persona.conversationTestInvalid'))
+      }
+      this.conversationTestRunning = true
+      Api.persona.rerunTest(this.detail.personaId, this.conversationTestRow.version, samples, (response) => {
+        this.conversationTestRunning = false
+        const report = this.ok(response) || {}
+        this.conversationTestReport = report.conversationReport || report
+        this.$message[report.status === 'passed' ? 'success' : 'warning'](
+          this.$t(report.status === 'passed' ? 'persona.testPassed' : 'persona.testFailed'))
+        this.showDetail(this.detail)
+      }, () => { this.conversationTestRunning = false })
     },
     publishVersion(row) { Api.persona.publish(this.detail.personaId, row.version, this.detail.visibility || 'private', () => { this.$message.success(this.$t('persona.publishSuccess')); this.showDetail(this.detail); this.loadPersonas() }) },
     rollbackVersion(row) { Api.persona.rollback(this.detail.personaId, row.version, () => { this.$message.success(this.$t('persona.rollbackSuccess')); this.showDetail(this.detail); this.loadPersonas() }) },
@@ -786,6 +828,8 @@ pre {
 .diff-controls .el-select { width: 130px; }
 .diff-value { max-height: 180px; font-size: 11px; }
 .audit-collapse { margin-top: 20px; }
+.conversation-samples { margin-top: 16px; }
+.conversation-report { margin-top: 16px; max-height: 260px; }
 ::v-deep .el-dialog { max-width: calc(100vw - 32px); border-radius: 14px; }
 
 @media (max-width: 1180px) {

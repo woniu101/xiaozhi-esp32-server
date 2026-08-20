@@ -7,7 +7,7 @@
 - [CyberGirlfriend 最终成品实施方案](./cyber-girlfriend-final-product-plan.md)：已实现的最终产品基线、验证记录与现场部署验收清单；
 - [Companion Core 改造方案](./companion-core-implementation-plan.md)：已实现的底层技术基线。
 
-P0-P4 已完成代码实现。生产部署、升级和回滚见 [部署手册](./deploy/README.md)。
+P0-P5 已完成代码实现。生产部署、升级和回滚见 [部署手册](./deploy/README.md)。
 
 ## 1. 导入 dot-skill Persona
 
@@ -30,7 +30,7 @@ python -m core.companion.importers.dot_skill publish \
 
 导入器兼容 dot-skill schema 1/2/3，以及旧版只有 `meta.json + persona.md + work.md` 的目录。它只读取人物元数据和 Markdown，不执行来源中的脚本、工具或安装指令。
 
-公众人物会自动归类为 `celebrity`，关系阶段固定不超过 `friend`。
+公众人物会自动归类为 `celebrity`，并强制保留“AI 角色、不代表真人”的身份提示；导入器默认推荐朋友型，但实际关系范围在角色配置中独立选择。
 
 ## 2. 智控台导入并绑定智能体
 
@@ -49,12 +49,19 @@ Overlay 示例：
 {
   "ai_identity_notice": "这是 AI 陪伴角色，不代表相关真人本人。",
   "user_address": "阿明",
+  "relationship_mode": "romance",
   "initial_stage": "familiar",
   "allowed_stages": ["familiar", "friend", "ambiguous", "lover"],
   "intimacy_boundaries": ["不以冷暴力逼迫用户", "不声称现实中的真人承诺"],
   "memory_rules": ["只引用真实保存的共同经历"],
   "proactive_enabled": true,
   "proactive_interval_minutes": 180,
+  "proactive_daily_limit": 3,
+  "proactive_quiet_start": "23:00",
+  "proactive_quiet_end": "08:00",
+  "proactive_timezone": "Asia/Shanghai",
+  "proactive_max_unanswered": 3,
+  "proactive_rejection_cooldown_minutes": 1440,
   "proactive_behavior_rules": ["只在设备在线且用户空闲时简短问候"],
   "voice_reply_style": "适合语音播放，通常 2 到 4 句",
   "tool_rephrase_style": "保留事实和数值，用角色自己的短句表达",
@@ -77,6 +84,7 @@ companion:
   agent_id: local-agent
   persona_registry: data/companion/personas
   database_path: data/companion/companion.db
+  outbox_path: data/companion/commit_outbox.db
   context_timeout_ms: 500
 ```
 
@@ -84,7 +92,13 @@ companion:
 
 `repository: auto` 在 manager-api 部署下通过受 `server.secret` 保护的接口把状态、事件和记忆写入 MySQL；单体部署使用 SQLite。两种模式都以 `owner_user_id + agent_id + persona_id` 为关系主键，因此同一用户绑定到同一智能体的多个设备会共享同一人物的状态，而不同人物不会串关系或记忆。
 
+manager-api 短暂不可用时，结构化状态提交会写入本地 `outbox_path` 并在后台重放；该文件可能包含记忆候选，
+应放在持久卷中并保持仅服务账号可读。`/internal/companion/health` 可查看积压数量和最老积压时长。
+
 管理端只显示关系阶段、有效轮次和记忆数量，不显示内部信任/好感分数。重置操作需要确认，并会写入 `ai_companion_audit` 审计表。
+“仅重置关系”会保留当前 Persona 的人物记忆；“完整重置”才会清除关系、事件和记忆。最近一轮诊断只保存回应计划、事件、记忆 ID、状态和耗时，不保存原始对话。
+
+可选混合向量召回默认关闭。需要时在 `companion.memory_embedding` 配置 OpenAI-compatible `/embeddings` 服务；服务失败会自动回退词法/概念召回。
 
 ## 4. 版本管理
 

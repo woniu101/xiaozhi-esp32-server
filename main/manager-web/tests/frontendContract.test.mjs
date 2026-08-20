@@ -18,6 +18,10 @@ const personaLibrarySource = await readFile(
   new URL('../src/views/PersonaLibrary.vue', import.meta.url),
   'utf8',
 );
+const personaApiSource = await readFile(
+  new URL('../src/apis/module/persona.js', import.meta.url),
+  'utf8',
+);
 const roleConfigSource = await readFile(
   new URL('../src/views/roleConfig.vue', import.meta.url),
   'utf8',
@@ -114,6 +118,22 @@ test('companion role configuration preserves scoped state and legacy data', () =
   assert.match(roleConfigSource, /form\.model\.memModelId === 'Memory_mem_local_short'/);
   assert.match(roleConfigSource, /Changing provider controls future behavior only/);
   assert.match(roleConfigSource, /templateScopes:\s*\["base"\]/);
+  assert.match(roleConfigSource, /relationship_mode:\s*""/);
+  assert.match(roleConfigSource, /relationshipModeRomance/);
+  assert.match(roleConfigSource, /availableCompanionStages/);
+  assert.match(roleConfigSource, /proactive_daily_limit:\s*3/);
+  assert.match(roleConfigSource, /proactive_quiet_start:\s*"23:00"/);
+  assert.match(roleConfigSource, /proactive_rejection_cooldown_minutes:\s*1440/);
+  assert.match(roleConfigSource, /proactiveNumberRanges/);
+  assert.match(roleConfigSource, /proactive-policy-grid/);
+  assert.match(roleConfigSource, /llm_first_tokenMs/);
+  assert.match(roleConfigSource, /first_audioMs/);
+  assert.match(personaLibrarySource, /conversationSamplesJson/);
+  assert.match(personaApiSource, /conversationSamples/);
+  assert.match(roleConfigSource, /mode !== "custom"/);
   assert.match(agentApiSource, /\/legacy-memory\?confirmAgentId=/);
+  assert.match(agentApiSource, /\/companion\/relationship\?confirmAgentId=/);
+  assert.match(agentApiSource, /\/companion\/diagnostic/);
+  assert.match(roleConfigSource, /openCompanionDiagnostic/);
   assert.match(agentApiSource, /\/companion\/memories\/\$\{memoryId\}/);
 });

@@ -54,12 +54,23 @@ class CompanionContextTest(unittest.TestCase):
         overlay = normalize_overlay({
             "proactive_enabled": True,
             "proactive_interval_minutes": 1,
+            "proactive_daily_limit": 99,
+            "proactive_rejection_cooldown_minutes": 1,
+            "proactive_max_unanswered": 99,
+            "proactive_timezone": "Asia/Shanghai",
+            "proactive_quiet_start": "25:00",
+            "proactive_quiet_end": "08:00",
             "proactive_behavior_rules": ["只在白天自然问候"],
         })
         self.assertTrue(overlay["proactive_enabled"])
         self.assertEqual(overlay["proactive_interval_minutes"], 5)
+        self.assertEqual(overlay["proactive_daily_limit"], 20)
+        self.assertEqual(overlay["proactive_rejection_cooldown_minutes"], 60)
+        self.assertEqual(overlay["proactive_max_unanswered"], 10)
+        self.assertNotIn("proactive_quiet_start", overlay)
+        self.assertEqual("08:00", overlay["proactive_quiet_end"])
 
-    def test_public_figure_overlay_cannot_expand_relationship(self):
+    def test_public_figure_relationship_is_selected_by_agent_binding(self):
         spec = PersonaSpec(
             id="persona.celebrity.test",
             display_name="测试公众人物",
@@ -76,14 +87,43 @@ class CompanionContextTest(unittest.TestCase):
         overlay = effective_overlay(
             spec,
             {
+                "relationship_mode": "romance",
                 "initial_stage": "lover",
                 "allowed_stages": ["familiar", "friend", "ambiguous", "lover"],
                 "ai_identity_notice": "仅供测试。",
             },
         )
-        self.assertEqual(overlay["allowed_stages"], ["familiar", "friend"])
-        self.assertEqual(overlay["initial_stage"], "familiar")
+        self.assertEqual(
+            overlay["allowed_stages"],
+            ["stranger", "familiar", "friend", "ambiguous", "lover"],
+        )
+        self.assertEqual(overlay["initial_stage"], "lover")
         self.assertIn("不是真人本人", overlay["ai_identity_notice"])
+
+    def test_legacy_binding_keeps_imported_relationship_range(self):
+        spec = PersonaSpec(
+            id="persona.celebrity.legacy",
+            display_name="旧人物",
+            source={"adapter": "dot-skill", "family": "celebrity", "artifact_sha256": "c" * 64},
+            identity={},
+            relationship_policy={"initial_stage": "familiar", "allowed_stages": ["familiar", "friend"]},
+        )
+        overlay = effective_overlay(spec, {})
+        self.assertEqual(overlay["allowed_stages"], ["stranger", "familiar", "friend"])
+
+    def test_custom_relationship_mode_uses_binding_stages(self):
+        spec = PersonaSpec(
+            id="persona.colleague.custom",
+            display_name="自定义人物",
+            source={"adapter": "dot-skill", "family": "colleague", "artifact_sha256": "d" * 64},
+            identity={},
+            relationship_policy={"initial_stage": "familiar", "allowed_stages": ["familiar", "friend"]},
+        )
+        overlay = effective_overlay(
+            spec,
+            {"relationship_mode": "custom", "allowed_stages": ["familiar", "ambiguous", "intimate"]},
+        )
+        self.assertEqual(overlay["allowed_stages"], ["familiar", "ambiguous", "intimate"])
 
     def test_non_public_real_person_keeps_configured_relationship_policy(self):
         spec = PersonaSpec(
@@ -139,6 +179,22 @@ class CompanionContextTest(unittest.TestCase):
         self.assertTrue(all(item.subject_key.startswith("commitment:") for item in commitments))
         self.assertTrue(all(item.expires_at for item in commitments))
 
+    def test_explicit_forget_request_targets_recalled_memory(self):
+        turn = CompletedTurn("turn-forget", "忘掉我喜欢咖啡这件事", "好，不再记着。")
+        _, memories = RuleBasedEventExtractor().extract(
+            turn,
+            context_memories=[{
+                "memory_type": "semantic",
+                "subject_key": "preference:咖啡",
+                "content": "用户喜欢咖啡",
+                "importance": 0.7,
+                "sensitivity": "personal",
+            }],
+        )
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0].operation, "forget")
+        self.assertEqual(memories[0].subject_key, "preference:咖啡")
+
     def test_response_planner_uses_current_turn_signal(self):
         planner = ResponsePlanner()
         plan = planner.plan(
@@ -160,6 +216,30 @@ class CompanionContextTest(unittest.TestCase):
         weather = planner.plan("明天天气怎么样", CompanionState(), [], [])
         self.assertEqual(happy.dialogue_act, "receive")
         self.assertEqual(weather.dialogue_act, "answer")
+
+    def test_response_planner_uses_persona_relationship_and_avoids_question_streaks(self):
+        persona = PersonaSpec(
+            id="persona.relationship.rabbit",
+            display_name="小兔",
+            source={"adapter": "test", "family": "relationship", "artifact_sha256": "e" * 64},
+            identity={},
+            expression={"rhythm": "短句，先停一下再回应"},
+            emotional_logic={"care_patterns": ["先确认对方有没有吃饭"]},
+        )
+        state = CompanionState()
+        state.relationship.stage = "lover"
+        plan = ResponsePlanner().plan(
+            "其实我今天特别累",
+            state,
+            [CompanionEvent("user_expressed_exhaustion", 0.9)],
+            [],
+            persona=persona,
+            recent_acts=["engage:question", "banter:question"],
+        )
+        self.assertEqual(plan.question_policy, "none")
+        self.assertIn("先确认对方有没有吃饭", plan.persona_guidance)
+        self.assertIn("稳定表达在意", plan.relationship_expression)
+        self.assertIn("人物做法", plan.render())
 
     def test_hybrid_extractor_merges_valid_structured_memory(self):
         class FakeLlm:
@@ -203,6 +283,52 @@ class CompanionContextTest(unittest.TestCase):
         ]
         ranked = rank_memories(rows, "你记得我喜欢喝什么吗", 2)
         self.assertEqual(ranked[0]["id"], 1)
+
+    def test_explicit_recall_does_not_return_unrelated_important_memory(self):
+        rows = [{
+            "id": 1,
+            "memory_type": "semantic",
+            "subject_key": "identity:job",
+            "content": "用户的工作是设计师",
+            "importance": 0.99,
+            "confidence": 0.9,
+            "sensitivity": "personal",
+        }]
+        self.assertEqual(rank_memories(rows, "你还记得我早餐喜欢吃什么吗", 2), [])
+
+    def test_embedding_similarity_can_recall_a_paraphrase(self):
+        class FakeEmbedder:
+            def embed(self, texts):
+                vectors = {
+                    "最近通勤累不累": [1.0, 0.0],
+                    "work:commute 用户每天坐地铁去公司": [0.95, 0.05],
+                    "preference:food 用户喜欢吃火锅": [0.0, 1.0],
+                }
+                return [vectors[text] for text in texts]
+
+        rows = [
+            {
+                "id": 1,
+                "memory_type": "episodic",
+                "subject_key": "work:commute",
+                "content": "用户每天坐地铁去公司",
+                "importance": 0.6,
+                "confidence": 0.8,
+                "sensitivity": "personal",
+            },
+            {
+                "id": 2,
+                "memory_type": "semantic",
+                "subject_key": "preference:food",
+                "content": "用户喜欢吃火锅",
+                "importance": 0.8,
+                "confidence": 0.9,
+                "sensitivity": "personal",
+            },
+        ]
+        ranked = rank_memories(rows, "最近通勤累不累", 2, embedder=FakeEmbedder())
+        self.assertEqual(ranked[0]["id"], 1)
+        self.assertEqual(ranked[0]["match_source"], "hybrid_embedding")
 
     def test_meaningful_turn_excludes_trivial_and_tool_only_activity(self):
         trivial = CompletedTurn("trivial", "嗯", "我在。")

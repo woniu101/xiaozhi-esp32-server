@@ -1,7 +1,7 @@
 # CyberGirlfriend 最终成品实施方案
 
-> 状态：Development Baseline v4.1
-> 更新日期：2026-08-19
+> 状态：Development Baseline v6.0
+> 更新日期：2026-08-20
 > 适用仓库：`xiaozhi-esp32-server`
 > 目标：在现有小智服务端上形成可导入人物、持续建立关系、保存长期记忆、使用克隆音色的赛博女友产品闭环。
 
@@ -22,7 +22,7 @@
 
 ## 2. 当前结论
 
-本仓库已经完成 P0-P4 主体代码及角色配置四批优化，当前阶段是“集成验证和真实环境验收”：
+本仓库已经完成 P0-P6 主体代码及角色配置、人物自主性、可观测性和提交可靠性优化，当前阶段是“集成验证和真实环境验收”：
 
 - `dot-skill -> PersonaSpec -> Runtime Prompt` 转换链已经存在；
 - Companion Runtime、情绪、关系、记忆和工具表达链已经接入 `xiaozhi-server`；
@@ -39,7 +39,7 @@
 - Companion 使用中性基础系统规则，旧版 intent-llm 在配置页标记为不兼容；
 - 角色配置按人物、关系记忆、能力、声音、高级兼容五区展示，并显示保存/重启状态；
 - 人物记忆支持查看、编辑、删除、过期、去重和同主题新事实替换旧事实；
-- 关系支持冷却、降级和道歉修复，主动关心具备独立开关与频率调度。
+- 关系支持冷却、降级和道歉修复，主动关心具备安静时段、每日限额、拒绝冷却和未回应退避。
 
 第五批“活人感”运行时优化也已完成：
 
@@ -49,6 +49,25 @@
 - 召回加入概念主题、词法、主题键、重要度、可信度与时间衰减，并支持承诺/待办和防重复召回；
 - Persona 示例不再整包常驻上下文，而是按当前场景最多选择 3 条并进行短期轮换。
 
+第六批“人物自主性与可观测性”已完成代码实现：
+
+- Persona 身份与 Agent 关系模式解耦。角色配置可选择朋友型、恋爱型、深度陪伴型或自定义阶段；公众人物只保留 AI 身份提示和默认推荐，不再暗中锁死关系上限；
+- Response Planner 会结合当前关系阶段、Persona 的关心/冲突/修复方式和最近回应动作，限制连续追问并避免复用最近回复开头；
+- 长期记忆支持可选 OpenAI-compatible Embedding 混合召回、明确遗忘、同主题替换和无关记忆抑制；
+- 发布测试可接收真实/回放对话样本，检测空回复、AI 套话、重复句式、过长回复、追问过多和场景预期；
+- 每轮持久化非敏感诊断，包括 Persona/版本、回应计划、关系事件、记忆 ID、候选操作、状态变化和耗时，不保存原始对话；
+- 实时语音链新增 ASR 到首 Token、首段 TTS、首包音频、整轮播放与打断停止指标，并丢弃被打断轮次的残留音频；
+- 管理端支持“仅重置关系并保留记忆”、最近一轮诊断和按关系模式筛选可选初始阶段。
+
+第七批“提交可靠性与主动关心约束”已完成代码实现：
+
+- manager-api 提交失败会进入权限收紧的本地持久 Outbox，按身份保持顺序并后台指数退避重放；
+- Outbox 遇到 revision 冲突时读取远端最新状态，重新归约结构化事件后以同一 turn id 幂等提交；
+- 在线主动关心支持时区、跨午夜安静时段、每日上限、连续未回应指数退避与明确拒绝后的冷却；
+- 主动消息生成期间若用户开始说话会被丢弃；在线播放补齐标准 `tts/start` 状态切换，并使用当前句子 ID，
+  不再被设备 Listening 状态或过期音频过滤器误删；
+- 内部健康接口提供 Outbox 积压和主动关心聚合状态，并记录发送、抑制、回应、拒绝与重放指标。
+
 仍需在目标环境完成 MySQL 迁移、真实画廊导入、真实模型评审、TTS 供应商和 ESP32 设备验收。
 
 ## 3. 产品体验
@@ -57,7 +76,7 @@
 
 顶部导航新增“Persona 人物库”，包含：
 
-- 我的角色：查看草稿/发布状态、关系上限和版本；
+- 我的角色：查看草稿/发布状态、可配置关系范围和版本；
 - 在线画廊：搜索 colleague-skill Gallery；
 - GitHub 导入：输入仓库地址和可选 ref；
 - ZIP 导入：上传本地 dot-skill 制品；
@@ -92,11 +111,14 @@
 - 已发布 Persona 下拉框；
 - 版本下拉框，留空表示始终跟随当前发布版；
 - 用户称呼；
+- 关系模式（朋友型 / 恋爱型 / 深度陪伴型 / 自定义）；
 - 初始关系阶段；
 - 允许发展的关系阶段；
 - 亲密边界、记忆规则、主动行为规则；
+- 主动关心频率、每日上限、安静时段、时区、未回应上限和拒绝冷却；
 - 语音回复风格、工具复述风格和即时操作确认语；
 - 高级 JSON 预览。
+- 最近一轮非敏感诊断，以及“仅重置关系 / 完整重置”两种操作。
 
 Overlay 只能覆盖白名单字段，不能写入内部 trust、affection、intimacy、conflict 或 emotion 分数。
 
@@ -133,6 +155,7 @@ manager-web -> manager-api Import Job
 xiaozhi-server Companion Runtime
   Persona + State + Memories + Current Turn
                     |
+                    +--> durable commit Outbox --> manager-api replay
                     v
              LLM -> TTS -> ESP32
 ```
@@ -180,17 +203,18 @@ manual Persona YAML
 
 单体模式保留 Filesystem Persona Registry + SQLite Repository，方便本地开发。
 
-### 5.4 公众人物策略
+### 5.4 人物身份与关系模式解耦
 
 Adapter 识别 `public-figure` / `celebrity` 后：
 
 - `family` 归一化为 `celebrity`；
 - `is_public_figure=true`；
-- 关系阶段最多到 `friend`；
-- Overlay 不能把关系扩展到 ambiguous/lover/intimate；
-- Runtime Prompt 明确这是 AI 角色，不代表真人本人。
+- Runtime Prompt 强制说明这是 AI 角色，不代表真人本人；
+- 默认推荐 `friend`，但推荐不是运行时上限；
+- 实际关系范围由智能体绑定的 `relationship_mode` 决定，不再由 Persona 的公众人物标签隐式决定；
+- `custom` 模式仍只能选择状态机已有阶段，不能直接写入 trust/affection/intimacy 等内部数值。
 
-这是人物运行策略，不参与导入任务状态流转。
+这样同一个 Persona 可以在不同智能体上采用不同产品关系设定，同时保持身份真实性边界。
 
 ## 6. PersonaSpec v1
 
@@ -282,6 +306,8 @@ POST /config/companion/commit
 POST /config/companion/memories/search
 ```
 
+面向角色配置的管理接口还包括最近一轮诊断、人物记忆管理、仅重置关系和完整状态重置。
+
 Compiler 内部接口由 manager-api 使用 `server.secret` 生成 HMAC 签名，并校验 timestamp、nonce 和 body hash。
 
 ## 9. 数据模型
@@ -295,7 +321,7 @@ Compiler 内部接口由 manager-api 使用 `server.secret` 生成 HMAC 签名�
 - `ai_agent_persona`：智能体绑定、固定版本和 Overlay；
 - `ai_companion_state`：情绪与关系当前状态，使用 revision 做 CAS；
 - `ai_companion_event`：从对话提取的结构化事件；
-- `ai_companion_turn`：轮次幂等记录；
+- `ai_companion_turn`：轮次幂等记录与非敏感 `diagnostic_json`；
 - `ai_companion_memory`：长期记忆；
 - `ai_companion_audit`：发布、回滚、归档和重置等管理操作。
 
@@ -312,8 +338,8 @@ before_turn
   -> load and decay committed state
   -> extract current-turn signals
   -> build non-persistent preview state
-  -> semantic/concept memory recall + anti-repeat
-  -> Response Planner + situational examples
+  -> lexical/concept/optional-embedding memory recall + anti-repeat
+  -> Persona-aware Response Planner + situational examples
   -> build ephemeral context
   -> inject into LLM input
 
@@ -321,7 +347,7 @@ after_turn
   -> rule + structured memory extraction
   -> merge and deduplicate pre/post events
   -> reduce emotion/relationship exactly once
-  -> generate facts, episodes, shared events and commitments
+  -> generate/replace/forget facts, episodes, shared events and commitments
   -> commit with turn id + expected revision
   -> update TTS/presentation hints
 ```
@@ -335,10 +361,10 @@ after_turn
 
 1. 表达 DNA：口头禅、节奏、句长、调侃方式和禁止表达；
 2. 当轮信号：疲惫、低落、开心、关心、感谢、攻击、道歉、共同计划和重要倾诉会即时影响本轮回应；
-3. Response Planner：先决定安慰、边界、修复、倾听、回忆、建议或行动，再生成角色化文本；
+3. Response Planner：先决定安慰、边界、修复、倾听、回忆、建议或行动，再结合关系阶段、人物做法和最近句式生成角色化文本；
 4. 情绪状态：valence、arousal、warmth、irritation、fatigue，随事件变化并自然衰减；
 5. 关系状态：阶段与 trust/affection/intimacy/conflict 等内部状态；
-6. 长期记忆：事实、偏好、共同事件、关系事件与承诺，经混合抽取和相关性筛选后进入上下文；
+6. 长期记忆：事实、偏好、共同事件、关系事件与承诺，经混合抽取、可选向量召回、相关性筛选和明确遗忘后进入上下文；
 7. 动态示例：只选择与当前对话场景相关的 Persona 示例，并避免连续复用同一示例；
 8. 工具人格化：即时操作先短确认，信息工具结果保留事实后再按人物风格复述。
 
@@ -367,6 +393,7 @@ companion:
   enabled: true
   persona_registry_backend: manager-api
   repository: auto
+  outbox_path: data/companion/commit_outbox.db
   context_timeout_ms: 500
 ```
 
@@ -385,10 +412,11 @@ companion:
 - dot-skill schema 1/2/3 与 legacy layout；
 - ZIP/GitHub 安全来源；
 - PersonaSpec schema、Compiler 和 Prompt Injection；
-- 公众人物关系上限；
+- 关系模式与 Persona 身份解耦、旧绑定兼容；
 - Emotion/Relationship reducer；
 - Memory 排序、去重和隐私过滤；
 - Runtime before/after turn、幂等和 fail-open；
+- 真实对话质量评估、语音延迟跟踪和中断旧音频过滤；
 - Manager API Repository 与 Filesystem Registry。
 
 ### 14.2 manager-api
@@ -422,6 +450,13 @@ companion:
 7. 发布 v2，再回滚 v1，状态不丢失；
 8. 上传一段声音样本，训练后切换音色；
 9. 用 ESP32 实机验证语音、打断、工具调用和重连。
+
+### 14.5 2026-08-20 本地验证记录
+
+- `xiaozhi-server`：87 项 Python 单元/契约测试全部通过，`compileall` 通过；
+- `manager-web`：i18n 六语言键检查通过，3 个 Node 测试文件通过，生产构建成功；
+- `manager-api`：环境没有 Maven 可执行文件；已使用 Java 21 与本地 Maven 依赖缓存全量编译 main/test 源码，编译通过；
+- 未在本机执行：Liquibase 对空 MySQL/升级库的真实迁移、manager-api JUnit 运行、真实 TTS/ESP32 验收。
 
 ## 15. 实施里程碑
 
@@ -467,14 +502,34 @@ companion:
 - 不兼容 Provider 自动忽略风格参数；
 - ESP32 表现提示保持可选和兼容。
 
+### P5：人物自主性、记忆 2.0 与诊断——代码已实现，待集成环境验收
+
+- 绑定级关系模式和独立关系重置；
+- Persona-aware Planner、连续追问和最近句式抑制；
+- 可选 Embedding 混合召回、明确遗忘和无关记忆过滤；
+- 真实对话样本质量评估；
+- 非敏感每轮诊断和实时语音阶段指标；
+- 打断后旧轮次音频过滤和重连恢复计数。
+
+### P6：提交可靠性与受控主动关心——代码已实现，待集成环境验收
+
+- manager-api 提交持久 Outbox、后台重放和 CAS 冲突重新归约；
+- Session 待提交状态与远端状态刷新；
+- 在线主动关心安静时段、每日上限、拒绝冷却和无回应退避；
+- 主动生成竞态丢弃、标准 `tts/start` 状态切换和 TTS 句子 ID 修复；
+- Outbox/主动关心健康聚合和运行指标。
+
 ## 16. 下一步开发顺序
 
-1. 在开发环境的空库和已有 Companion 数据库分别应用完整 Liquibase changelog；
-2. 接入 colleague-skill Gallery 真实条目，完成导入、编译、测试、发布、绑定和回滚闭环；
-3. 用至少 30 轮真实语音对话调参表达 DNA、关系阈值、记忆抽取和召回；
-4. 选择一个实际 TTS Provider 跑通 Voice Clone，并验证动态情绪能力提示与降级；
-5. 在 ESP32 实机完成延迟、打断、重连、工具调用、主动关心和音色切换验收；
-6. 再决定离线主动推送、头像、Live2D 和表情映射等表现层扩展。
+1. 在空库和已有 Companion 数据库应用完整 Liquibase changelog，并在具备 Maven 的环境执行 manager-api 单测；
+2. 选 2 个真实 Gallery Persona 完成导入、编译、对话样本测试、发布、绑定、升级和回滚闭环；
+3. 建立至少 50 轮、覆盖安慰/冲突/修复/回忆/计划/工具的语音回归集，用现有 evaluator 调整人物表达、关系阈值和记忆策略；
+4. 在真实 manager-api 故障、恢复和服务重启场景验证 Outbox，并为积压数量/时长配置告警；
+5. 接入实际 Embedding 服务做延迟和召回准确率验收，再决定是否引入独立向量库；
+6. 选择 GPT-SoVITS 或实际云 TTS 跑通 Voice Clone，并验证语气控制、首包延迟和降级；
+7. 在 ESP32 实机设定并验收首 Token、首包音频、打断停止、重连恢复和工具调用 SLO；
+8. 将主动调度状态持久化并支持多实例/离线推送；
+9. 最后再做头像、Live2D 和表情映射。
 
 ## 17. 完成定义
 
@@ -484,7 +539,7 @@ companion:
 - dot-skill 不在运行时执行，Canonical PersonaSpec 可追溯到来源 hash；
 - 多轮对话中人物语言和行为稳定，不退化为通用助手；
 - 情绪、关系和记忆跨会话延续，更新人物版本不会丢状态；
-- 公众人物关系上限不可被 Overlay 放宽；
+- 公众人物 AI 身份提示不可移除，关系模式不会被 Persona 身份标签隐式覆盖；
 - Companion 故障不会中断原有语音聊天；
 - 训练成功的克隆音色可在角色配置中直接启用；
 - 核心单测、构建、数据库迁移和实机验收均通过。

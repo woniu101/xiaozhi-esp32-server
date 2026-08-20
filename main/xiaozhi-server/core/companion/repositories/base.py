@@ -19,6 +19,7 @@ class CompanionRepository(ABC):
         state: CompanionState,
         events: list[CompanionEvent],
         memories: list[MemoryCandidate],
+        diagnostic: dict | None = None,
     ) -> str:
         """Return committed, duplicate, or conflict."""
         raise NotImplementedError
@@ -32,3 +33,6 @@ class CompanionRepository(ABC):
         exclude_ids: set[int | str] | None = None,
     ) -> list[dict]:
         raise NotImplementedError
+
+    async def has_pending_commits(self, identity: CompanionIdentity) -> bool:
+        return False

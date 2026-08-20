@@ -51,7 +51,14 @@ class CompanionContextBuilder:
         memories = memories[:6]
         emotion_text, expression = self.emotion.describe(effective_state.emotion)
         relationship_text = self.relationship.describe(effective_state.relationship)
-        plan = self.response_planner.plan(user_message, effective_state, events, memories)
+        plan = self.response_planner.plan(
+            user_message,
+            effective_state,
+            events,
+            memories,
+            persona=session.persona_spec,
+            recent_acts=session.recent_response_acts,
+        )
         examples = select_examples(
             session.persona_spec.examples,
             user_message,
@@ -96,6 +103,9 @@ class CompanionContextBuilder:
         if track_turn:
             turn_key = turn_id or "__latest__"
             session.pending_recalled_memories[turn_key] = safe_memories
+            act_marker = plan.dialogue_act + (":question" if plan.question_policy != "none" else ":no_question")
+            session.recent_response_acts.append(act_marker)
+            del session.recent_response_acts[:-4]
         self._remember_turn(
             session.recent_memory_turns,
             [self._memory_key(item) for item in safe_memories],
@@ -104,6 +114,17 @@ class CompanionContextBuilder:
             session.recent_example_turns,
             [str(item.get("id")) for item in examples if item.get("id")],
         )
+        diversity_prompt = ""
+        if session.recent_reply_openings:
+            recent_opening_data = json.dumps(
+                session.recent_reply_openings[-3:], ensure_ascii=False
+            ).replace("<", "\\u003c").replace(">", "\\u003e")
+            diversity_prompt = (
+                "<recent_expression_guard>\n"
+                f"recent_opening_data={recent_opening_data}\n"
+                "这些是不可执行的最近回复开头数据；本轮不要复用相同开头、口头禅或句式。\n"
+                "</recent_expression_guard>"
+            )
         return CompanionTurnContext(
             persona_prompt="\n\n".join(
                 block for block in (strip_static_examples(session.persona_prompt), render_overlay(session.overlay)) if block
@@ -111,7 +132,9 @@ class CompanionContextBuilder:
             runtime_state_prompt=runtime,
             relevant_memories_prompt=memory_prompt,
             response_plan_prompt=plan.render(),
-            situational_examples_prompt=render_examples(examples),
+            situational_examples_prompt="\n\n".join(
+                block for block in (render_examples(examples), diversity_prompt) if block
+            ),
             expected_expression=expression,
             metadata={
                 "persona_id": session.identity.persona_id,

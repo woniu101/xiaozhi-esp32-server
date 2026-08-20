@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import re
 from typing import Any
 
+from .models import PersonaSpec
 from .semantic_text import semantic_concepts
 from .state_models import CompanionEvent, CompanionState
 
@@ -17,6 +18,9 @@ class ResponsePlan:
     initiative: str
     memory_policy: str
     scene_tags: tuple[str, ...]
+    relationship_expression: str = ""
+    persona_guidance: tuple[str, ...] = ()
+    variation_hint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -49,12 +53,20 @@ class ResponsePlan:
             "optional": "相关记忆能让回应更自然时最多使用一条",
             "use_one": "使用一条最相关记忆，但不要逐条盘点",
         }
+        persona_lines = ""
+        if self.persona_guidance:
+            persona_lines = "\n人物做法：" + "；".join(self.persona_guidance[:3]) + "。"
+        relationship_line = (
+            f"\n关系表达：{self.relationship_expression}。" if self.relationship_expression else ""
+        )
+        variation_line = f"\n变化要求：{self.variation_hint}。" if self.variation_hint else ""
         return (
             "<response_plan>\n"
             f"回应动作：{acts.get(self.dialogue_act, acts['engage'])}。\n"
             f"语气：{self.emotional_tone}；篇幅：{lengths.get(self.response_length, lengths['short'])}。\n"
             f"提问：{questions.get(self.question_policy, questions['optional'])}。\n"
-            f"记忆：{memory.get(self.memory_policy, memory['none'])}。\n"
+            f"记忆：{memory.get(self.memory_policy, memory['none'])}。"
+            f"{relationship_line}{persona_lines}{variation_line}\n"
             "避免使用‘作为AI’‘我理解你的感受’‘还有什么可以帮你’等通用助手套话；"
             "除非用户明确要求，不使用标题、列表或总结式结构。\n"
             "该计划只约束表达方式，不要在回答中复述计划内容。\n"
@@ -69,6 +81,8 @@ class ResponsePlanner:
         state: CompanionState,
         events: list[CompanionEvent] | None = None,
         memories: list[dict] | None = None,
+        persona: PersonaSpec | None = None,
+        recent_acts: list[str] | None = None,
     ) -> ResponsePlan:
         text = str(user_message or "").strip()
         event_types = {event.event_type for event in (events or [])}
@@ -104,10 +118,18 @@ class ResponsePlanner:
 
         if state.emotion.irritation >= 0.3 and act not in {"repair", "boundary"}:
             tone = "略有保留、不过分热情"
+        recent = [str(item) for item in (recent_acts or [])[-4:]]
+        if question != "none" and len(recent) >= 2 and all(
+            item.endswith(":question") for item in recent[-2:]
+        ):
+            question = "none"
         memory_policy = "none"
         if memories:
             memory_policy = "use_one" if explicit_recall else "optional"
         tags = tuple(dict.fromkeys((act, *sorted(concepts))))
+        relationship_expression = self._relationship_expression(state.relationship.stage)
+        persona_guidance = self._persona_guidance(persona, act)
+        variation_hint = self._variation_hint(act, recent)
         return ResponsePlan(
             dialogue_act=act,
             emotional_tone=tone,
@@ -116,7 +138,56 @@ class ResponsePlanner:
             initiative="low" if question == "none" else "medium",
             memory_policy=memory_policy,
             scene_tags=tags,
+            relationship_expression=relationship_expression,
+            persona_guidance=persona_guidance,
+            variation_hint=variation_hint,
         )
+
+    def _relationship_expression(self, stage: str) -> str:
+        return {
+            "stranger": "保持礼貌和边界，不预设熟悉感",
+            "familiar": "可以自然熟络，但不使用过度亲密的称呼或承诺",
+            "friend": "像熟悉朋友一样有个人反应和适度主动关心",
+            "ambiguous": "允许含蓄亲近和轻微暧昧，但不强迫定义关系",
+            "lover": "可以稳定表达在意和亲密感，重视说过的话",
+            "intimate": "可以表现深度默契，但仍尊重拒绝和个人空间",
+        }.get(stage, "保持自然、尊重的关系距离")
+
+    def _persona_guidance(self, persona: PersonaSpec | None, act: str) -> tuple[str, ...]:
+        if persona is None:
+            return ()
+        values: list[str] = []
+        emotional = persona.emotional_logic if isinstance(persona.emotional_logic, dict) else {}
+        repair = persona.conflict_repair if isinstance(persona.conflict_repair, dict) else {}
+        expression = persona.expression if isinstance(persona.expression, dict) else {}
+        if act in {"comfort", "listen", "receive"}:
+            values.extend(str(item) for item in emotional.get("care_patterns", [])[:2])
+        if act == "boundary" and repair.get("conflict_style"):
+            values.append(str(repair["conflict_style"]))
+        if act == "repair" and repair.get("repair_pattern"):
+            values.append(str(repair["repair_pattern"]))
+        if expression.get("rhythm"):
+            values.append(f"保持其表达节奏：{expression['rhythm']}")
+        result = []
+        for value in values:
+            cleaned = re.sub(r"\s+", " ", value).strip()[:180]
+            if cleaned and cleaned not in result:
+                result.append(cleaned)
+        return tuple(result[:3])
+
+    def _variation_hint(self, act: str, recent: list[str]) -> str:
+        recent_acts = [item.split(":", 1)[0] for item in recent]
+        repeated = recent_acts.count(act) >= 2
+        options = {
+            "comfort": "从用户刚说的具体细节切入，不重复固定安慰开场",
+            "engage": "表达一个具体反应，不复述用户整句话",
+            "banter": "换一种句式接话，不复用口头禅制造笑点",
+            "receive": "自然接住即可，不连续使用客套感谢",
+            "answer": "直接给答案，开头不要重复上一轮结构",
+        }
+        if repeated:
+            return options.get(act, "本轮更换开头和句式，不重复最近两轮的回应结构")
+        return "不要机械复用人物口头禅"
 
 
 def is_explicit_recall_request(user_message: str) -> bool:

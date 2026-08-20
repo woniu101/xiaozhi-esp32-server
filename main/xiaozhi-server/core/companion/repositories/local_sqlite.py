@@ -12,8 +12,9 @@ from core.companion.repositories.memory_ranking import rank_memories
 
 
 class SQLiteCompanionRepository(CompanionRepository):
-    def __init__(self, database_path: str | Path):
+    def __init__(self, database_path: str | Path, embedder=None):
         self.database_path = Path(database_path).expanduser().resolve()
+        self.embedder = embedder
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -29,6 +30,7 @@ class SQLiteCompanionRepository(CompanionRepository):
             self._create_tables(connection)
             self._migrate_persona_scope(connection)
             self._migrate_memory_lifecycle(connection)
+            self._migrate_turn_diagnostics(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_companion_event_owner
@@ -73,6 +75,7 @@ class SQLiteCompanionRepository(CompanionRepository):
                     agent_id TEXT NOT NULL,
                     persona_id TEXT NOT NULL,
                     state_revision INTEGER NOT NULL,
+                    diagnostic_json TEXT,
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS companion_memory (
@@ -173,6 +176,13 @@ class SQLiteCompanionRepository(CompanionRepository):
             if name not in columns:
                 connection.execute(f"ALTER TABLE companion_memory ADD COLUMN {name} {definition}")
 
+    def _migrate_turn_diagnostics(self, connection):
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(companion_turn)").fetchall()
+        }
+        if "diagnostic_json" not in columns:
+            connection.execute("ALTER TABLE companion_turn ADD COLUMN diagnostic_json TEXT")
+
     def _claim_legacy_scope(self, connection, identity: CompanionIdentity):
         """Assign a pre-persona local history to the first Persona opened after upgrade."""
         current = connection.execute(
@@ -217,10 +227,15 @@ class SQLiteCompanionRepository(CompanionRepository):
         state: CompanionState,
         events: list[CompanionEvent],
         memories: list[MemoryCandidate],
+        diagnostic: dict | None = None,
     ) -> str:
-        return self._commit_turn_sync(identity, turn_id, expected_revision, state, events, memories)
+        return self._commit_turn_sync(
+            identity, turn_id, expected_revision, state, events, memories, diagnostic
+        )
 
-    def _commit_turn_sync(self, identity, turn_id, expected_revision, state, events, memories) -> str:
+    def _commit_turn_sync(
+        self, identity, turn_id, expected_revision, state, events, memories, diagnostic=None
+    ) -> str:
         now = iso_now()
         connection = self._connect()
         try:
@@ -261,6 +276,32 @@ class SQLiteCompanionRepository(CompanionRepository):
             for memory in memories:
                 normalized = re.sub(r"\s+", "", memory.content).lower()
                 normalized_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+                if memory.operation == "forget":
+                    if memory.subject_key:
+                        connection.execute(
+                            """
+                            UPDATE companion_memory SET status='forgotten', last_accessed_at=?
+                            WHERE user_id=? AND agent_id=? AND persona_id=?
+                              AND memory_type=? AND subject_key=? AND status='active'
+                            """,
+                            (
+                                now, identity.user_id, identity.agent_id, identity.persona_id,
+                                memory.memory_type, memory.subject_key,
+                            ),
+                        )
+                    else:
+                        connection.execute(
+                            """
+                            UPDATE companion_memory SET status='forgotten', last_accessed_at=?
+                            WHERE user_id=? AND agent_id=? AND persona_id=?
+                              AND memory_type=? AND normalized_hash=? AND status='active'
+                            """,
+                            (
+                                now, identity.user_id, identity.agent_id, identity.persona_id,
+                                memory.memory_type, normalized_hash,
+                            ),
+                        )
+                    continue
                 if memory.subject_key:
                     connection.execute(
                         """
@@ -343,8 +384,16 @@ class SQLiteCompanionRepository(CompanionRepository):
                         ),
                     )
             connection.execute(
-                "INSERT INTO companion_turn(turn_id,user_id,agent_id,persona_id,state_revision,created_at) VALUES(?,?,?,?,?,?)",
-                (turn_id, identity.user_id, identity.agent_id, identity.persona_id, state.revision, now),
+                "INSERT INTO companion_turn(turn_id,user_id,agent_id,persona_id,state_revision,diagnostic_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (
+                    turn_id,
+                    identity.user_id,
+                    identity.agent_id,
+                    identity.persona_id,
+                    state.revision,
+                    json.dumps(diagnostic or {}, ensure_ascii=False, separators=(",", ":")),
+                    now,
+                ),
             )
             connection.commit()
             return "committed"
@@ -384,7 +433,9 @@ class SQLiteCompanionRepository(CompanionRepository):
                 """,
                 (identity.user_id, identity.agent_id, identity.persona_id, iso_now()),
             ).fetchall()
-            selected = rank_memories(rows, query, limit, exclude_ids=exclude_ids)
+            selected = rank_memories(
+                rows, query, limit, exclude_ids=exclude_ids, embedder=self.embedder
+            )
             if selected:
                 connection.executemany(
                     "UPDATE companion_memory SET last_accessed_at=? WHERE id=?",

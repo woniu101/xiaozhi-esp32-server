@@ -149,11 +149,26 @@
                               :placeholder="$t('roleConfig.userAddressPlaceholder')" maxlength="40" />
                             <el-select v-model="companionOverlayForm.initial_stage" :disabled="!form.companionEnabled"
                               :placeholder="$t('roleConfig.initialStage')" clearable>
-                              <el-option v-for="stage in companionStages" :key="stage" :value="stage" :label="$t(`roleConfig.stage_${stage}`)" />
+                              <el-option v-for="stage in availableCompanionStages" :key="stage" :value="stage" :label="$t(`roleConfig.stage_${stage}`)" />
                             </el-select>
                           </div>
-                          <el-select v-model="companionOverlayForm.allowed_stages" :disabled="!form.companionEnabled"
-                            multiple :placeholder="$t('roleConfig.allowedStages')" class="form-input">
+                          <el-select v-model="companionOverlayForm.relationship_mode" :disabled="!form.companionEnabled"
+                            :placeholder="$t('roleConfig.relationshipMode')" class="form-input" clearable
+                            @change="handleRelationshipModeChange">
+                            <el-option value="friend" :label="$t('roleConfig.relationshipModeFriend')" />
+                            <el-option value="romance" :label="$t('roleConfig.relationshipModeRomance')" />
+                            <el-option value="deep" :label="$t('roleConfig.relationshipModeDeep')" />
+                            <el-option value="custom" :label="$t('roleConfig.relationshipModeCustom')" />
+                          </el-select>
+                          <div v-if="companionOverlayForm.relationship_mode && companionOverlayForm.relationship_mode !== 'custom'"
+                            class="relationship-mode-hint">
+                            {{ $t('roleConfig.relationshipModeStages') }}：
+                            {{ relationshipModeStageLabels }}
+                          </div>
+                          <el-select v-if="companionOverlayForm.relationship_mode === 'custom'"
+                            v-model="companionOverlayForm.allowed_stages" :disabled="!form.companionEnabled"
+                            multiple :placeholder="$t('roleConfig.allowedStages')" class="form-input"
+                            @change="handleCustomStagesChange">
                             <el-option v-for="stage in companionStages" :key="stage" :value="stage" :label="$t(`roleConfig.stage_${stage}`)" />
                           </el-select>
                           <el-input v-model.trim="companionOverlayForm.voice_reply_style" :disabled="!form.companionEnabled"
@@ -161,12 +176,52 @@
                           <el-input v-model.trim="companionOverlayForm.tool_ack_prefix" :disabled="!form.companionEnabled"
                             :placeholder="$t('roleConfig.toolAckPrefix')" maxlength="100" />
                           <div class="proactive-settings">
-                            <el-switch v-model="companionOverlayForm.proactive_enabled" :disabled="!form.companionEnabled"
-                              active-text="启用主动关心" />
-                            <span>最短间隔（分钟）</span>
-                            <el-input-number v-model="companionOverlayForm.proactive_interval_minutes"
-                              :disabled="!form.companionEnabled || !companionOverlayForm.proactive_enabled"
-                              :min="5" :max="10080" :step="30" size="small" />
+                            <div class="proactive-heading">
+                              <el-switch v-model="companionOverlayForm.proactive_enabled" :disabled="!form.companionEnabled"
+                                :active-text="$t('roleConfig.proactiveEnabled')" />
+                              <span>{{ $t('roleConfig.proactiveHint') }}</span>
+                            </div>
+                            <div v-if="companionOverlayForm.proactive_enabled" class="proactive-policy-grid">
+                              <label class="proactive-field">
+                                <span>{{ $t('roleConfig.proactiveInterval') }}</span>
+                                <el-input-number v-model="companionOverlayForm.proactive_interval_minutes"
+                                  :disabled="!form.companionEnabled" :min="5" :max="10080" :step="30"
+                                  controls-position="right" size="small" />
+                              </label>
+                              <label class="proactive-field">
+                                <span>{{ $t('roleConfig.proactiveDailyLimit') }}</span>
+                                <el-input-number v-model="companionOverlayForm.proactive_daily_limit"
+                                  :disabled="!form.companionEnabled" :min="1" :max="20" :step="1"
+                                  controls-position="right" size="small" />
+                              </label>
+                              <label class="proactive-field">
+                                <span>{{ $t('roleConfig.proactiveQuietHours') }}</span>
+                                <div class="quiet-hours-inputs">
+                                  <el-input v-model.trim="companionOverlayForm.proactive_quiet_start"
+                                    :disabled="!form.companionEnabled" placeholder="23:00" maxlength="5" />
+                                  <span>—</span>
+                                  <el-input v-model.trim="companionOverlayForm.proactive_quiet_end"
+                                    :disabled="!form.companionEnabled" placeholder="08:00" maxlength="5" />
+                                </div>
+                              </label>
+                              <label class="proactive-field">
+                                <span>{{ $t('roleConfig.proactiveTimezone') }}</span>
+                                <el-input v-model.trim="companionOverlayForm.proactive_timezone"
+                                  :disabled="!form.companionEnabled" placeholder="Asia/Shanghai" maxlength="64" />
+                              </label>
+                              <label class="proactive-field">
+                                <span>{{ $t('roleConfig.proactiveMaxUnanswered') }}</span>
+                                <el-input-number v-model="companionOverlayForm.proactive_max_unanswered"
+                                  :disabled="!form.companionEnabled" :min="1" :max="10" :step="1"
+                                  controls-position="right" size="small" />
+                              </label>
+                              <label class="proactive-field">
+                                <span>{{ $t('roleConfig.proactiveRejectionCooldown') }}</span>
+                                <el-input-number v-model="companionOverlayForm.proactive_rejection_cooldown_minutes"
+                                  :disabled="!form.companionEnabled" :min="60" :max="43200" :step="60"
+                                  controls-position="right" size="small" />
+                              </label>
+                            </div>
                           </div>
                           <div class="advanced-toggle">
                             <el-switch v-model="companionAdvanced" :active-text="$t('roleConfig.advancedOverlay')" />
@@ -181,10 +236,16 @@
                             turns: companionSummary.meaningfulTurns,
                             memories: companionSummary.memoryCount
                           }) }}
+                          <el-button type="text" class="companion-reset" @click="resetCompanionRelationship">
+                            {{ $t('roleConfig.resetCompanionRelationship') }}
+                          </el-button>
                           <el-button type="text" class="companion-reset" @click="resetCompanionState">
                             {{ $t('roleConfig.resetCompanionState') }}
                           </el-button>
                           <el-button type="text" @click="openCompanionMemories">管理人物记忆</el-button>
+                          <el-button type="text" @click="openCompanionDiagnostic">
+                            {{ $t('roleConfig.openCompanionDiagnostic') }}
+                          </el-button>
                           <div class="persona-state-hint">每个人物拥有独立的关系和记忆；切换回来会恢复该人物原来的状态。</div>
                         </div>
                       </div>
@@ -683,6 +744,37 @@
       </el-table>
       <div v-if="!companionMemoriesLoading && companionMemories.length === 0" class="memory-empty">当前人物还没有形成长期记忆。</div>
     </el-dialog>
+    <el-dialog :title="$t('roleConfig.companionDiagnosticTitle')"
+      :visible.sync="showCompanionDiagnostic" width="720px">
+      <el-alert type="info" :closable="false" show-icon
+        :title="$t('roleConfig.companionDiagnosticHint')" />
+      <div v-loading="companionDiagnosticLoading" class="companion-diagnostic">
+        <template v-if="companionDiagnostic && Object.keys(companionDiagnostic).length">
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="Turn ID">{{ companionDiagnostic.turnId || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="Persona">{{ companionDiagnostic.personaId || form.personaId || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="关系模式">{{ companionDiagnostic.relationshipMode || 'legacy' }}</el-descriptions-item>
+            <el-descriptions-item label="上下文耗时">{{ companionDiagnostic.contextBuildMs || 0 }} ms</el-descriptions-item>
+            <el-descriptions-item label="回应动作">{{ diagnosticResponseAct }}</el-descriptions-item>
+            <el-descriptions-item label="关系阶段">{{ diagnosticRelationshipStage }}</el-descriptions-item>
+            <el-descriptions-item label="首 Token">{{ formatDiagnosticLatency('llm_first_tokenMs') }}</el-descriptions-item>
+            <el-descriptions-item label="首段送入 TTS">{{ formatDiagnosticLatency('tts_text_enqueuedMs') }}</el-descriptions-item>
+            <el-descriptions-item label="首包音频">{{ formatDiagnosticLatency('first_audioMs') }}</el-descriptions-item>
+            <el-descriptions-item label="LLM 流结束">{{ formatDiagnosticLatency('llm_completedMs') }}</el-descriptions-item>
+          </el-descriptions>
+          <div class="diagnostic-section">
+            <b>关系事件</b>
+            <el-tag v-for="item in companionDiagnostic.eventTypes || []" :key="item" size="mini">{{ item }}</el-tag>
+            <span v-if="!(companionDiagnostic.eventTypes || []).length">无</span>
+          </div>
+          <div class="diagnostic-section">
+            <b>召回记忆 ID</b>
+            <span>{{ (companionDiagnostic.recalledMemoryIds || []).join(', ') || '无' }}</span>
+          </div>
+        </template>
+        <div v-else-if="!companionDiagnosticLoading" class="memory-empty">还没有可显示的完成对话诊断。</div>
+      </div>
+    </el-dialog>
     <el-footer>
       <version-footer />
     </el-footer>
@@ -811,22 +903,64 @@ export default {
       templateScopes: ["base"],
       savedFormFingerprint: "",
       showCompanionMemories: false,
+      showCompanionDiagnostic: false,
+      companionDiagnosticLoading: false,
+      companionDiagnostic: null,
       companionMemoriesLoading: false,
       companionMemories: [],
       editingMemory: null,
       memoryEditForm: { content: "", importance: 0.5, expiresAt: null },
       companionOverlayForm: {
         user_address: "",
+        relationship_mode: "",
         initial_stage: "",
         allowed_stages: [],
         voice_reply_style: "",
         tool_ack_prefix: "",
         proactive_enabled: false,
-        proactive_interval_minutes: 180
+        proactive_interval_minutes: 180,
+        proactive_daily_limit: 3,
+        proactive_quiet_start: "23:00",
+        proactive_quiet_end: "08:00",
+        proactive_timezone: "Asia/Shanghai",
+        proactive_max_unanswered: 3,
+        proactive_rejection_cooldown_minutes: 1440
       }
     };
   },
   computed: {
+    diagnosticResponseAct() {
+      return (this.companionDiagnostic && this.companionDiagnostic.responsePlan
+        && this.companionDiagnostic.responsePlan.dialogue_act) || "-";
+    },
+    diagnosticRelationshipStage() {
+      return (this.companionDiagnostic && this.companionDiagnostic.stateAfter
+        && this.companionDiagnostic.stateAfter.relationship
+        && this.companionDiagnostic.stateAfter.relationship.stage) || "-";
+    },
+    relationshipModeStageLabels() {
+      const map = {
+        friend: ["stranger", "familiar", "friend"],
+        romance: ["stranger", "familiar", "friend", "ambiguous", "lover"],
+        deep: this.companionStages
+      };
+      return (map[this.companionOverlayForm.relationship_mode] || [])
+        .map(stage => this.$t(`roleConfig.stage_${stage}`))
+        .join(" → ");
+    },
+    availableCompanionStages() {
+      const mode = this.companionOverlayForm.relationship_mode;
+      if (mode === "custom") {
+        const selected = (this.companionOverlayForm.allowed_stages || [])
+          .filter(stage => this.companionStages.includes(stage));
+        return selected.length ? selected : this.companionStages;
+      }
+      return {
+        friend: ["stranger", "familiar", "friend"],
+        romance: ["stranger", "familiar", "friend", "ambiguous", "lover"],
+        deep: this.companionStages
+      }[mode] || this.companionStages;
+    },
     availableVoiceOptions() {
       return this.voiceOptions;
     },
@@ -958,12 +1092,19 @@ export default {
         this.validateCompanionOverlay(value);
         this.companionOverlayForm = {
           user_address: value.user_address || "",
+          relationship_mode: value.relationship_mode || "",
           initial_stage: value.initial_stage || "",
           allowed_stages: Array.isArray(value.allowed_stages) ? value.allowed_stages : [],
           voice_reply_style: value.voice_reply_style || "",
           tool_ack_prefix: value.tool_ack_prefix || "",
           proactive_enabled: Boolean(value.proactive_enabled),
-          proactive_interval_minutes: Number(value.proactive_interval_minutes || 180)
+          proactive_interval_minutes: Number(value.proactive_interval_minutes || 180),
+          proactive_daily_limit: Number(value.proactive_daily_limit || 3),
+          proactive_quiet_start: value.proactive_quiet_start || "23:00",
+          proactive_quiet_end: value.proactive_quiet_end || "08:00",
+          proactive_timezone: value.proactive_timezone || "Asia/Shanghai",
+          proactive_max_unanswered: Number(value.proactive_max_unanswered || 3),
+          proactive_rejection_cooldown_minutes: Number(value.proactive_rejection_cooldown_minutes || 1440)
         };
       } catch (error) {
         this.$message.error(this.$t("roleConfig.companionOverlayInvalid"));
@@ -982,13 +1123,35 @@ export default {
       this.form.companionOverlay = JSON.stringify(base);
       return this.form.companionOverlay;
     },
+    handleRelationshipModeChange(mode) {
+      if (mode !== "custom") this.companionOverlayForm.allowed_stages = [];
+      const stages = {
+        friend: ["stranger", "familiar", "friend"],
+        romance: ["stranger", "familiar", "friend", "ambiguous", "lover"],
+        deep: this.companionStages
+      }[mode];
+      if (stages && this.companionOverlayForm.initial_stage
+        && !stages.includes(this.companionOverlayForm.initial_stage)) {
+        this.companionOverlayForm.initial_stage = "familiar";
+      }
+    },
+    handleCustomStagesChange(stages) {
+      if (this.companionOverlayForm.initial_stage
+        && !(stages || []).includes(this.companionOverlayForm.initial_stage)) {
+        this.companionOverlayForm.initial_stage = (stages || [])[0] || "";
+      }
+    },
+    formatDiagnosticLatency(key) {
+      const value = this.companionDiagnostic?.voiceLatency?.[key];
+      return Number.isFinite(value) ? `${value} ms` : "-";
+    },
     validateCompanionOverlay(value) {
       if (!value || Array.isArray(value) || typeof value !== "object") {
         throw new TypeError("overlay must be an object");
       }
-      const textFields = new Set(["ai_identity_notice", "user_address", "voice_reply_style", "tool_rephrase_style", "tool_ack_prefix"]);
+      const textFields = new Set(["ai_identity_notice", "user_address", "voice_reply_style", "tool_rephrase_style", "tool_ack_prefix", "proactive_timezone", "proactive_quiet_start", "proactive_quiet_end"]);
       const listFields = new Set(["allowed_stages", "intimacy_boundaries", "memory_rules", "proactive_behavior_rules", "additional_rules"]);
-      const scalarFields = new Set(["initial_stage", "proactive_enabled", "proactive_interval_minutes"]);
+      const scalarFields = new Set(["relationship_mode", "initial_stage", "proactive_enabled", "proactive_interval_minutes", "proactive_daily_limit", "proactive_rejection_cooldown_minutes", "proactive_max_unanswered"]);
       Object.entries(value).forEach(([key, item]) => {
         if (!textFields.has(key) && !listFields.has(key) && !scalarFields.has(key)) {
           throw new TypeError(`unsupported overlay field: ${key}`);
@@ -998,10 +1161,41 @@ export default {
           throw new TypeError(`${key} must be a text array`);
         }
         if (key === "proactive_enabled" && typeof item !== "boolean") throw new TypeError(`${key} must be boolean`);
+        if (key === "relationship_mode" && !["friend", "romance", "deep", "custom"].includes(item)) {
+          throw new TypeError("relationship_mode is invalid");
+        }
         if (key === "proactive_interval_minutes" && (typeof item !== "number" || item < 5 || item > 10080)) {
           throw new TypeError(`${key} must be between 5 and 10080`);
         }
+        const proactiveNumberRanges = {
+          proactive_daily_limit: [1, 20],
+          proactive_rejection_cooldown_minutes: [60, 43200],
+          proactive_max_unanswered: [1, 10]
+        };
+        if (proactiveNumberRanges[key]) {
+          const [minimum, maximum] = proactiveNumberRanges[key];
+          if (typeof item !== "number" || item < minimum || item > maximum) {
+            throw new TypeError(`${key} must be between ${minimum} and ${maximum}`);
+          }
+        }
+        if (["proactive_quiet_start", "proactive_quiet_end"].includes(key)
+          && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(item)) {
+          throw new TypeError(`${key} must be HH:MM`);
+        }
       });
+      const relationshipModeStages = {
+        friend: ["stranger", "familiar", "friend"],
+        romance: ["stranger", "familiar", "friend", "ambiguous", "lover"],
+        deep: this.companionStages,
+        custom: value.allowed_stages || []
+      };
+      const availableStages = relationshipModeStages[value.relationship_mode];
+      if (value.relationship_mode === "custom" && availableStages.length === 0) {
+        throw new TypeError("custom relationship mode requires allowed_stages");
+      }
+      if (value.initial_stage && availableStages && !availableStages.includes(value.initial_stage)) {
+        throw new TypeError("initial_stage is outside relationship mode");
+      }
       return true;
     },
     async saveConfig() {
@@ -1171,6 +1365,20 @@ export default {
         });
       });
     },
+    openCompanionDiagnostic() {
+      const agentId = this.$route.query.agentId;
+      this.showCompanionDiagnostic = true;
+      this.companionDiagnosticLoading = true;
+      this.companionDiagnostic = null;
+      Api.agent.getCompanionDiagnostic(agentId, ({ data }) => {
+        this.companionDiagnosticLoading = false;
+        if (data?.code === 0) this.companionDiagnostic = data.data || {};
+        else this.$message.error(data?.msg || this.$t("roleConfig.companionDiagnosticFailed"));
+      }, () => {
+        this.companionDiagnosticLoading = false;
+        this.$message.error(this.$t("roleConfig.companionDiagnosticFailed"));
+      });
+    },
     resetCompanionState() {
       const agentId = this.$route.query.agentId;
       this.$confirm(
@@ -1185,6 +1393,27 @@ export default {
         Api.agent.resetCompanionState(agentId, ({ data }) => {
           if (data?.code === 0) {
             this.$message.success(this.$t("roleConfig.resetCompanionSuccess"));
+            this.fetchCompanionSummary(agentId);
+          } else {
+            this.$message.error(data?.msg || this.$t("roleConfig.resetCompanionFailed"));
+          }
+        });
+      }).catch(() => {});
+    },
+    resetCompanionRelationship() {
+      const agentId = this.$route.query.agentId;
+      this.$confirm(
+        this.$t("roleConfig.resetCompanionRelationshipConfirm"),
+        this.$t("message.info"),
+        {
+          confirmButtonText: this.$t("button.ok"),
+          cancelButtonText: this.$t("button.cancel"),
+          type: "warning",
+        }
+      ).then(() => {
+        Api.agent.resetCompanionRelationship(agentId, ({ data }) => {
+          if (data?.code === 0) {
+            this.$message.success(this.$t("roleConfig.resetCompanionRelationshipSuccess"));
             this.fetchCompanionSummary(agentId);
           } else {
             this.$message.error(data?.msg || this.$t("roleConfig.resetCompanionFailed"));
@@ -2964,13 +3193,68 @@ export default {
   flex: 1;
 }
 
-.proactive-settings {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  gap: 10px;
+.relationship-mode-hint {
+  padding: 8px 10px;
+  border: 1px solid #e5eaf3;
+  border-radius: 6px;
+  background: #fff;
   color: #7b849b;
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.proactive-settings {
+  padding: 10px;
+  border: 1px solid #e5eaf3;
+  border-radius: 6px;
+  background: #fff;
+  color: #7b849b;
+  font-size: 12px;
+}
+
+.proactive-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proactive-heading > span {
+  color: #9098aa;
+}
+
+.proactive-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf0f6;
+}
+
+.proactive-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.proactive-field .el-input-number,
+.proactive-field .el-input {
+  width: 100%;
+}
+
+.quiet-hours-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 1100px) {
+  .proactive-policy-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .persona-option-meta {
@@ -2983,6 +3267,20 @@ export default {
   color: #606266;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.companion-diagnostic {
+  min-height: 120px;
+  margin-top: 14px;
+}
+
+.diagnostic-section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  color: #606266;
 }
 
 .persona-state-hint {

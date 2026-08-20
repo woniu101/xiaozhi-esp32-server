@@ -41,6 +41,7 @@ async def resume_vad_detection(conn: "ConnectionHandler"):
 
 
 async def startToChat(conn: "ConnectionHandler", text):
+    conn.pending_user_text_ready_at = time.perf_counter()
     # 检查输入是否是JSON格式（包含说话人信息）
     speaker_name = None
     actual_text = text
@@ -70,6 +71,9 @@ async def startToChat(conn: "ConnectionHandler", text):
         conn.current_speaker = speaker_name
     else:
         conn.current_speaker = None
+
+    if hasattr(conn, "_record_companion_user_activity"):
+        conn._record_companion_user_activity(actual_text)
 
     if conn.need_bind:
         await check_bind_device(conn)

@@ -46,6 +46,7 @@ from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils import textUtils
 from core.companion.runtime import get_companion_manager
+from core.companion.latency import ConversationLatencyTracker
 from core.companion.state_models import CompanionIdentity
 from core.companion.turn_recorder import TurnRecorder
 from core.companion.privacy import sanitize_tool_output
@@ -56,7 +57,8 @@ from core.companion.presentation import (
 )
 from core.companion.observability import metrics
 from core.companion.event_extractor import RuleBasedEventExtractor, LLMStructuredMemoryExtractor
-from core.companion.proactive import proactive_due
+from core.companion.proactive import proactive_decision, proactive_registry
+from core.companion.proactive_playback import enqueue_online_proactive_playback
 
 
 TAG = __name__
@@ -218,9 +220,14 @@ class ConnectionHandler:
         self.active_turn_recorder = None
         self.companion_proactive_task = None
         self.last_companion_proactive_time = 0.0
+        self.companion_proactive_key = None
+        self.last_proactive_suppression_reason = ""
         # Heartbeats and audio transport refresh last_activity_time, so proactive
         # check-ins need an independent timestamp for actual user turns.
         self.last_companion_user_turn_time = time.time()
+        self.pending_user_text_ready_at = None
+        self.companion_turn_latency = {}
+        self.aborted_sentence_ids = set()
 
     async def handle_connection(self, ws: websockets.ServerConnection):
         try:
@@ -1025,6 +1032,14 @@ class ConnectionHandler:
                 ),
                 timeout=max(0.1, init_timeout_ms / 1000),
             )
+            identity = self.companion_session.identity
+            self.companion_proactive_key = "|".join(
+                (identity.user_id, identity.agent_id, identity.persona_id)
+            )
+            metrics.increment(
+                "companion_session_open_total",
+                restored=str(self.companion_session.state.revision > 0).lower(),
+            )
             self.logger.bind(tag=TAG).info(
                 f"Companion 初始化成功: persona={persona_id}, version={self.companion_session.identity.persona_version}"
             )
@@ -1057,6 +1072,10 @@ class ConnectionHandler:
     def _finalize_companion_turn(self, recorder):
         if recorder is None:
             return
+        tracker = self.companion_turn_latency.get(getattr(recorder, "transport_id", None))
+        if tracker is not None:
+            tracker.mark("llm_completed")
+            recorder.add_diagnostic({"voiceLatency": tracker.snapshot()})
         completed = recorder.finalize()
         if self.active_turn_recorder is recorder:
             self.active_turn_recorder = None
@@ -1115,57 +1134,118 @@ class ConnectionHandler:
             if not overlay.get("proactive_enabled", False):
                 return
             now = time.time()
-            if not proactive_due(
+            timezone_name = str(overlay.get("proactive_timezone") or "Asia/Shanghai")
+            runtime_state = proactive_registry.snapshot(
+                self.companion_proactive_key or self.session_id,
+                now,
+                timezone_name,
+            )
+            decision = proactive_decision(
                 now,
                 self.last_companion_user_turn_time,
-                self.last_companion_proactive_time,
+                runtime_state,
                 int(overlay.get("proactive_interval_minutes", 180)),
-            ):
+                daily_limit=int(overlay.get("proactive_daily_limit", 3)),
+                max_unanswered=int(overlay.get("proactive_max_unanswered", 3)),
+                quiet_start=str(overlay.get("proactive_quiet_start") or "23:00"),
+                quiet_end=str(overlay.get("proactive_quiet_end") or "08:00"),
+                timezone_name=timezone_name,
+            )
+            if not decision.due:
+                if decision.reason != self.last_proactive_suppression_reason:
+                    metrics.increment(
+                        "companion_proactive_suppressed_total", reason=decision.reason
+                    )
+                    self.last_proactive_suppression_reason = decision.reason
                 continue
             if self.client_is_speaking or self.active_turn_recorder is not None or self.tts is None or self.llm is None:
                 continue
-            self.last_companion_proactive_time = now
-            await self.loop.run_in_executor(self.executor, self._emit_companion_proactive_message)
+            expected_user_turn = self.last_companion_user_turn_time
+            text = await self.loop.run_in_executor(
+                self.executor,
+                self._generate_companion_proactive_message,
+            )
+            if not text:
+                continue
+            playback = await enqueue_online_proactive_playback(
+                self,
+                text,
+                expected_user_turn,
+                send_state=self._send_companion_tts_state,
+            )
+            if playback.sent:
+                delivered_at = time.time()
+                self.last_companion_proactive_time = delivered_at
+                proactive_registry.record_sent(
+                    self.companion_proactive_key or self.session_id,
+                    delivered_at,
+                    timezone_name,
+                )
+                self.last_proactive_suppression_reason = ""
+                metrics.increment("companion_proactive_message_total")
+            elif playback.reason == "user_active":
+                metrics.increment(
+                    "companion_proactive_message_discarded_total", reason="user_active"
+                )
+            else:
+                metrics.increment(
+                    "companion_proactive_message_failed_total", reason=playback.reason
+                )
+                self.logger.bind(tag=TAG).warning(
+                    f"Companion 主动播放下发失败: {playback.error or playback.reason}"
+                )
 
-    def _emit_companion_proactive_message(self):
-        rules = self.companion_session.overlay.get("proactive_behavior_rules") or []
-        instruction = (
-            "在用户一段时间没有说话后，以当前人物身份主动发起一句自然、简短、不施压的关心。"
-            "不要假装用户刚刚说过话，不要虚构事件，不要要求用户必须回复。"
-        )
-        if rules:
-            instruction += "主动行为偏好：" + "；".join(str(item)[:200] for item in rules[:6])
-        context = self._build_companion_context(instruction, track_turn=False)
-        messages = self.dialogue.get_llm_dialogue_with_memory(
-            companion_context=context,
-        )
-        messages.append({"role": "user", "content": instruction})
+    async def _send_companion_tts_state(self, conn, state, text=None):
+        # Local import keeps the pure scheduling/playback contract independently
+        # testable without initializing the complete audio provider graph.
+        from core.handle.sendAudioHandle import send_tts_message
+
+        await send_tts_message(conn, state, text)
+
+    def _generate_companion_proactive_message(self):
         try:
+            rules = self.companion_session.overlay.get("proactive_behavior_rules") or []
+            instruction = (
+                "在用户一段时间没有说话后，以当前人物身份主动发起一句自然、简短、不施压的关心。"
+                "不要假装用户刚刚说过话，不要虚构事件，不要要求用户必须回复。"
+            )
+            if rules:
+                instruction += "主动行为偏好：" + "；".join(
+                    str(item)[:200] for item in rules[:6]
+                )
+            context = self._build_companion_context(instruction, track_turn=False)
+            messages = self.dialogue.get_llm_dialogue_with_memory(
+                companion_context=context,
+            )
+            messages.append({"role": "user", "content": instruction})
             chunks = self.llm.response(self.session_id, messages)
             text = "".join(str(chunk) for chunk in chunks if chunk)[:300].strip()
-            if not text:
-                return
-            sentence_id = str(uuid.uuid4().hex)
-            self.tts.tts_text_queue.put(TTSMessageDTO(
-                sentence_id=sentence_id,
-                sentence_type=SentenceType.FIRST,
-                content_type=ContentType.ACTION,
-            ))
-            self.tts.tts_text_queue.put(TTSMessageDTO(
-                sentence_id=sentence_id,
-                sentence_type=SentenceType.MIDDLE,
-                content_type=ContentType.TEXT,
-                content_detail=text,
-            ))
-            self.tts.tts_text_queue.put(TTSMessageDTO(
-                sentence_id=sentence_id,
-                sentence_type=SentenceType.LAST,
-                content_type=ContentType.ACTION,
-            ))
-            metrics.increment("companion_proactive_message_total")
+            return text or None
         except Exception as error:
-            metrics.increment("companion_proactive_message_failed_total")
+            metrics.increment(
+                "companion_proactive_message_failed_total", reason="generation_error"
+            )
             self.logger.bind(tag=TAG).warning(f"Companion 主动消息生成失败: {error}")
+            return None
+
+    def _record_companion_user_activity(self, text):
+        now = time.time()
+        self.last_companion_user_turn_time = now
+        if self.companion_session is None or not self.companion_proactive_key:
+            return
+        overlay = self.companion_session.overlay
+        timezone_name = str(overlay.get("proactive_timezone") or "Asia/Shanghai")
+        outcome = proactive_registry.record_user_response(
+            self.companion_proactive_key,
+            str(text or ""),
+            now,
+            timezone_name,
+            int(overlay.get("proactive_rejection_cooldown_minutes", 1440)),
+        )
+        if outcome == "rejected":
+            metrics.increment("companion_proactive_rejected_total")
+        elif outcome == "responded":
+            metrics.increment("companion_proactive_responded_total")
 
     def _initialize_memory(self):
         if self.memory is None:
@@ -1285,6 +1365,16 @@ class ConnectionHandler:
             companion_context = self._build_companion_context(query, turn_id=turn_recorder.turn_id)
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
+            turn_recorder.transport_id = current_sentence_id
+            started_at = self.pending_user_text_ready_at or time.perf_counter()
+            self.pending_user_text_ready_at = None
+            self.companion_turn_latency[current_sentence_id] = ConversationLatencyTracker(
+                current_sentence_id, started_at=started_at
+            )
+            if len(self.companion_turn_latency) > 20:
+                oldest = next(iter(self.companion_turn_latency))
+                if oldest != current_sentence_id:
+                    self.companion_turn_latency.pop(oldest, None)
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
@@ -1331,6 +1421,9 @@ class ConnectionHandler:
         response_message = []
 
         try:
+            tracker = self.companion_turn_latency.get(current_sentence_id)
+            if tracker is not None:
+                tracker.mark("llm_request")
             # 使用带记忆的对话
             memory_str = None
             # 仅当query非空（代表用户询问）时查询记忆
@@ -1388,6 +1481,8 @@ class ConnectionHandler:
             for response in llm_responses:
                 if self.client_abort:
                     break
+                if tracker is not None:
+                    tracker.mark("llm_first_token")
                 if self.intent_type == "function_call" and functions is not None:
                     content, tools_call = response
                     if "content" in response:
@@ -1429,6 +1524,8 @@ class ConnectionHandler:
                                                 content_detail=new_part,
                                             )
                                         )
+                                        if tracker is not None:
+                                            tracker.mark("tts_text_enqueued")
                 else:
                     content = response
 
@@ -1450,6 +1547,9 @@ class ConnectionHandler:
                     emotion_flag = False
 
                 if content is not None and len(content) > 0:
+                    tracker = self.companion_turn_latency.get(current_sentence_id)
+                    if tracker is not None:
+                        tracker.mark("llm_first_token")
                     if not tool_call_flag:
                         response_message.append(content)
                         if turn_recorder is not None:
@@ -1462,6 +1562,8 @@ class ConnectionHandler:
                                 content_detail=content,
                             )
                         )
+                        if tracker is not None:
+                            tracker.mark("tts_text_enqueued")
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
             if turn_recorder is not None:
@@ -1546,6 +1648,9 @@ class ConnectionHandler:
                                             content_detail=remaining,
                                         )
                                     )
+                                    tracker = self.companion_turn_latency.get(current_sentence_id)
+                                    if tracker is not None:
+                                        tracker.mark("tts_text_enqueued")
                             # 写入对话历史
                             da_response = self._clean_response_garbage(da_response)
                             self.tts.store_tts_text(current_sentence_id, da_response)

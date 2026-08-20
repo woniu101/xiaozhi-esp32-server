@@ -20,7 +20,9 @@ public interface PersonaManagementService {
 
     void archive(Long userId, String personaId, String version);
 
-    Map<String, Object> rerunTest(Long userId, String personaId, String version);
+    Map<String, Object> rerunTest(
+            Long userId, String personaId, String version,
+            List<Map<String, Object>> conversationSamples);
 
     List<Map<String, Object>> testRuns(Long userId, String personaId, String version);
 

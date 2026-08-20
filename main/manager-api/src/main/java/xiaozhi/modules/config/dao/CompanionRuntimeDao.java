@@ -46,7 +46,13 @@ public interface CompanionRuntimeDao {
             @Param("userId") String userId,
             @Param("agentId") String agentId,
             @Param("personaId") String personaId,
-            @Param("revision") long revision);
+            @Param("revision") long revision,
+            @Param("diagnosticJson") String diagnosticJson);
+
+    Map<String, Object> selectLatestDiagnostic(
+            @Param("userId") String userId,
+            @Param("agentId") String agentId,
+            @Param("personaId") String personaId);
 
     int insertEvent(
             @Param("turnId") String turnId,
@@ -74,6 +80,14 @@ public interface CompanionRuntimeDao {
             @Param("sourceTurnId") String sourceTurnId);
 
     int supersedeMemories(
+            @Param("userId") String userId,
+            @Param("agentId") String agentId,
+            @Param("personaId") String personaId,
+            @Param("memoryType") String memoryType,
+            @Param("subjectKey") String subjectKey,
+            @Param("normalizedHash") String normalizedHash);
+
+    int forgetMemories(
             @Param("userId") String userId,
             @Param("agentId") String agentId,
             @Param("personaId") String personaId,
@@ -148,6 +162,11 @@ public interface CompanionRuntimeDao {
             @Param("personaId") String personaId);
 
     int deleteState(
+            @Param("userId") String userId,
+            @Param("agentId") String agentId,
+            @Param("personaId") String personaId);
+
+    int resetRelationship(
             @Param("userId") String userId,
             @Param("agentId") String agentId,
             @Param("personaId") String personaId);

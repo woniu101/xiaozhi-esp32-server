@@ -138,9 +138,28 @@ export default {
             }).networkFail((error) => terminateCallbackRequest(onTerminalFailure, error));
         attachTerminalFailure(request, onTerminalFailure).send();
     },
+    getCompanionDiagnostic(agentId, callback, onTerminalFailure) {
+        const request = RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/diagnostic`)
+            .method('GET')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).networkFail((error) => terminateCallbackRequest(onTerminalFailure, error));
+        attachTerminalFailure(request, onTerminalFailure).send();
+    },
     resetCompanionState(agentId, callback) {
         RequestService.sendRequest()
             .url(`${getServiceUrl()}/agent/${agentId}/companion/state?confirmAgentId=${encodeURIComponent(agentId)}`)
+            .method('DELETE')
+            .success((res) => {
+                RequestService.clearRequestTime();
+                callback(res);
+            }).send();
+    },
+    resetCompanionRelationship(agentId, callback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/agent/${agentId}/companion/relationship?confirmAgentId=${encodeURIComponent(agentId)}`)
             .method('DELETE')
             .success((res) => {
                 RequestService.clearRequestTime();

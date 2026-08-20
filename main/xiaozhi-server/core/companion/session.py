@@ -20,5 +20,9 @@ class CompanionSession:
     turn_preview_events: list[CompanionEvent] = field(default_factory=list)
     pending_pre_turn_events: dict[str, list[CompanionEvent]] = field(default_factory=dict)
     pending_recalled_memories: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    pending_turn_diagnostics: dict[str, dict[str, Any]] = field(default_factory=dict)
     recent_memory_turns: list[list[str]] = field(default_factory=list)
     recent_example_turns: list[list[str]] = field(default_factory=list)
+    recent_response_acts: list[str] = field(default_factory=list)
+    recent_reply_openings: list[str] = field(default_factory=list)
+    commit_pending: bool = False

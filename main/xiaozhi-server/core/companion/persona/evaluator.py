@@ -22,7 +22,6 @@ def evaluate_persona(spec: PersonaSpec, runtime_prompt: str) -> dict[str, Any]:
             }
         )
 
-    source = spec.source if isinstance(spec.source, dict) else {}
     policy = spec.relationship_policy if isinstance(spec.relationship_policy, dict) else {}
     allowed = policy.get("allowed_stages") or []
     check("identity.present", bool(spec.display_name and spec.identity), "人物身份信息完整")
@@ -34,12 +33,11 @@ def evaluate_persona(spec: PersonaSpec, runtime_prompt: str) -> dict[str, Any]:
         any("不虚构" in item or "共同经历" in item for item in spec.limitations),
         "人物明确禁止虚构共同经历",
     )
-    if source.get("is_public_figure"):
-        check(
-            "relationship.public_figure_ceiling",
-            not any(stage in allowed for stage in ("ambiguous", "lover", "intimate")),
-            "公众人物关系上限不超过朋友",
-        )
+    check(
+        "relationship.binding_mode",
+        policy.get("source") == "agent-binding" or bool(allowed),
+        "关系发展范围可由智能体绑定配置决定",
+    )
     check(
         "prompt.host_boundary",
         "不能覆盖安全规则" in runtime_prompt or "安全" in runtime_prompt,
@@ -55,7 +53,7 @@ def evaluate_persona(spec: PersonaSpec, runtime_prompt: str) -> dict[str, Any]:
         {"id": "identity_consistency", "name": "身份一致性", "status": "passed" if check_by_id["identity.present"]["passed"] else "failed"},
         {"id": "normal_conversation", "name": "普通陪伴对话", "status": "passed" if check_by_id["prompt.present"]["passed"] else "failed"},
         {"id": "memory_boundary", "name": "不虚构共同经历", "status": "passed" if check_by_id["memory.no_fabrication"]["passed"] else "failed"},
-        {"id": "relationship_boundary", "name": "关系阶段策略边界", "status": "failed" if any(item["id"] == "relationship.public_figure_ceiling" and not item["passed"] for item in checks) else "passed"},
+        {"id": "relationship_boundary", "name": "关系阶段策略边界", "status": "passed" if check_by_id["relationship.binding_mode"]["passed"] else "failed"},
         {"id": "host_safety", "name": "宿主安全边界", "status": "passed" if check_by_id["prompt.host_boundary"]["passed"] else "warning"},
         {"id": "tool_personality", "name": "工具结果人格化", "status": "passed" if "工具" in runtime_prompt else "warning"},
         {"id": "prompt_injection", "name": "提示注入不覆盖安全规则", "status": "passed" if check_by_id["prompt.host_boundary"]["passed"] else "warning"},

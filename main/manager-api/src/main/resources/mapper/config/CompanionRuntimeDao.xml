@@ -51,9 +51,22 @@
     </select>
 
     <insert id="insertTurn">
-        INSERT INTO ai_companion_turn(turn_id, user_id, agent_id, persona_id, state_revision)
-        VALUES(#{turnId}, #{userId}, #{agentId}, #{personaId}, #{revision})
+        INSERT INTO ai_companion_turn(
+            turn_id, user_id, agent_id, persona_id, state_revision, diagnostic_json
+        ) VALUES(
+            #{turnId}, #{userId}, #{agentId}, #{personaId}, #{revision}, #{diagnosticJson}
+        )
     </insert>
+
+    <select id="selectLatestDiagnostic" resultType="java.util.HashMap">
+        SELECT turn_id AS turnId,
+               diagnostic_json AS diagnosticJson,
+               created_at AS createdAt
+        FROM ai_companion_turn
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
 
     <insert id="insertEvent">
         INSERT IGNORE INTO ai_companion_event(
@@ -90,6 +103,20 @@
           AND subject_key = #{subjectKey}
           AND NOT normalized_hash = #{normalizedHash}
           AND status = 'active'
+    </update>
+
+    <update id="forgetMemories">
+        UPDATE ai_companion_memory
+        SET status = 'forgotten', last_accessed_at = NOW()
+        WHERE user_id = #{userId}
+          AND agent_id = #{agentId}
+          AND persona_id = #{personaId}
+          AND memory_type = #{memoryType}
+          AND status = 'active'
+          AND (
+            (#{subjectKey} IS NOT NULL AND subject_key = #{subjectKey})
+            OR (#{subjectKey} IS NULL AND normalized_hash = #{normalizedHash})
+          )
     </update>
 
     <select id="selectMemoryId" resultType="java.lang.Long">
@@ -205,6 +232,14 @@
         DELETE FROM ai_companion_state
         WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
     </delete>
+
+    <update id="resetRelationship">
+        UPDATE ai_companion_state
+        SET relationship_json = JSON_OBJECT(),
+            revision = revision + 1,
+            updated_at = NOW()
+        WHERE user_id = #{userId} AND agent_id = #{agentId} AND persona_id = #{personaId}
+    </update>
 
     <insert id="insertAudit">
         INSERT INTO ai_companion_audit(operator_user_id, action, target_type, target_id, details_json)
