@@ -109,6 +109,9 @@ class ConnectionHandler:
 
         self.need_bind = False  # 是否需要绑定设备
         self.bind_completed_event = asyncio.Event()
+        # 差异化配置、Companion 与系统提示词全部完成后才允许处理客户端消息。
+        # bind_completed_event 只代表设备绑定状态已解析，不能代表运行时已经可用。
+        self.initialization_completed_event = asyncio.Event()
         self.bind_code = None  # 绑定设备的验证码
         self.last_bind_prompt_time = 0  # 上次播放绑定提示的时间戳(秒)
         self.bind_prompt_interval = 60  # 绑定提示播放间隔(秒)
@@ -389,7 +392,19 @@ class ConnectionHandler:
             await self._discard_message_with_bind_prompt()
             return
 
-        # 不需要绑定，继续处理消息
+        # hello 需要先行完成客户端能力协商；其余消息必须等待差异化配置、
+        # Companion 和系统提示词全部就绪。客户端通常会连续发送
+        # hello/listen/detect，首轮 detect 抢跑会让 LLM 退化成默认身份。
+        is_hello = False
+        if isinstance(message, str):
+            try:
+                is_hello = json.loads(message).get("type") == "hello"
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        if not is_hello and not self.initialization_completed_event.is_set():
+            await self.initialization_completed_event.wait()
+
+        # 不需要绑定且运行时已就绪，继续处理消息
 
         if isinstance(message, str):
             await handleTextMessage(self, message)
@@ -830,10 +845,14 @@ class ConnectionHandler:
             # 异步获取差异化配置
             await self._initialize_private_config_async()
             await self._initialize_companion()
-            # 在线程池中初始化组件
-            self.executor.submit(self._initialize_components)
+            # 在线程池中初始化组件，并等待系统提示词等连接级状态构建完成。
+            # 网络消息循环仍然保持异步，只在真正处理首条消息前由就绪屏障等待。
+            await self.loop.run_in_executor(self.executor, self._initialize_components)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"后台初始化失败: {e}")
+        finally:
+            # 即使初始化失败也必须释放等待者，沿用现有的降级/错误处理路径。
+            self.initialization_completed_event.set()
 
     async def _initialize_private_config_async(self):
         """从接口异步获取差异化配置（异步版本，不阻塞主循环）"""
