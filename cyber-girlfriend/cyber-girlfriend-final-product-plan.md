@@ -521,6 +521,9 @@ companion:
 
 ## 16. 下一步开发顺序
 
+P7-P13 的实现级数据结构、模块改动、验收门槛和测试矩阵见
+[`living-presence-next-development-plan.md`](./living-presence-next-development-plan.md)。本节保留产品级顺序，专项文档作为下一阶段开发指导。
+
 1. 在空库和已有 Companion 数据库应用完整 Liquibase changelog，并在具备 Maven 的环境执行 manager-api 单测；
 2. 选 2 个真实 Gallery Persona 完成导入、编译、对话样本测试、发布、绑定、升级和回滚闭环；
 3. 建立至少 50 轮、覆盖安慰/冲突/修复/回忆/计划/工具的语音回归集，用现有 evaluator 调整人物表达、关系阈值和记忆策略；

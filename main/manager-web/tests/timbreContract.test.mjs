@@ -46,3 +46,27 @@ test('IndexTTS2.5 preview unlocks Web Audio before inference and validates WAV b
   assert.match(ttsModelSource, /=== 'WAVE'/);
   assert.doesNotMatch(ttsModelSource, /new Audio\(/);
 });
+
+test('IndexTTS2.5 preview action is rendered in the preview column', () => {
+  const previewColumnStart = ttsModelSource.indexOf(
+    '<el-table-column v-if="isIndexTts" :label="$t(\'ttsModel.preview\')"',
+  );
+  const regularPreviewColumnStart = ttsModelSource.indexOf(
+    '<el-table-column v-else-if="!showReferenceColumns"',
+    previewColumnStart,
+  );
+  const operationColumnStart = ttsModelSource.indexOf(
+    '<el-table-column :label="$t(\'ttsModel.operation\')"',
+  );
+  const tableEnd = ttsModelSource.indexOf('</el-table>', operationColumnStart);
+
+  assert.notEqual(previewColumnStart, -1);
+  assert.notEqual(regularPreviewColumnStart, -1);
+  assert.notEqual(operationColumnStart, -1);
+  const previewColumnSource = ttsModelSource.slice(previewColumnStart, regularPreviewColumnStart);
+  const operationColumnSource = ttsModelSource.slice(operationColumnStart, tableEnd);
+  assert.match(previewColumnSource, /@click="previewIndexVoice\(scope\.row\)"/);
+  assert.match(previewColumnSource, /播放中/);
+  assert.doesNotMatch(operationColumnSource, /previewIndexVoice/);
+  assert.match(operationColumnSource, /重新上传/);
+});

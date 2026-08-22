@@ -979,7 +979,23 @@ TTS:
     split_bucket: true
     return_fragment: false
     speed_factor: 1.0
-    streaming_mode: false
+    # 0=关闭，1=高质量分片，2=中等延迟，3=最低首包延迟
+    streaming_mode: 2
+    stream_sample_rate: 32000
+    stream_chunk_size: 8192
+    stream_fallback: true
+    fragment_interval: 0.3
+    overlap_length: 2
+    min_chunk_length: 16
+    dynamic_emotion: true
+    # Companion 情绪类别映射到参考音频与参数预设。未配置的类别回退基础参考音频。
+    # emotion_presets:
+    #   warm:
+    #     ref_audio_path: "reference/warm.wav"
+    #     prompt_text: "与参考音频完全一致的文本"
+    #     prompt_lang: "zh"
+    #     speed_factor: 0.92
+    emotion_presets: {}
     seed: -1
     parallel_infer: true
     repetition_penalty: 1.35
@@ -1179,12 +1195,19 @@ TTS:
     type: index_tts_v2_5
     api_url: http://192.168.18.14:8092
     voice: "tuniang-normal"
-    lang: "ZH"
+    lang: "zh"
     speed: 1.0
     dynamic_emotion: true
     emotion_alpha: 0.85
     normalize_emotion: true
     text_normalization: true
+    streaming: true
+    stream_chunk_size: 8192
+    # 控制 Index 服务内部的语义分段；较小值首包更快，过小会损伤韵律连续性。
+    max_text_tokens_per_segment: 80
+    interval_silence_ms: 80
+    # 流式接口若在首包前失败，自动降级完整 WAV；已开始播放后不会重试，避免重复语音。
+    stream_fallback: true
     output_dir: tmp/
     format: wav
     tts_timeout: 60

@@ -56,7 +56,16 @@
               <el-tag v-else size="mini" type="danger">远端缺失</el-tag>
             </template>
           </el-table-column>
-          <el-table-column v-if="!showReferenceColumns" :label="$t('ttsModel.preview')" align="center" class-name="audio-column">
+          <el-table-column v-if="isIndexTts" :label="$t('ttsModel.preview')" align="center" width="100"
+            class-name="audio-column index-preview-column">
+            <template slot-scope="scope">
+              <el-button type="text" size="mini" :loading="previewingVoiceId === scope.row.voiceCode"
+                :disabled="!indexRemoteVoiceMap[scope.row.voiceCode]" @click="previewIndexVoice(scope.row)">
+                {{ previewingVoiceId === scope.row.voiceCode ? '播放中' : '试听' }}
+              </el-button>
+            </template>
+          </el-table-column>
+          <el-table-column v-else-if="!showReferenceColumns" :label="$t('ttsModel.preview')" align="center" class-name="audio-column">
             <template slot-scope="scope">
               <div class="custom-audio-container">
                 <el-input v-if="scope.row.editing" v-model="scope.row.voiceDemo" :placeholder="$t('ttsModel.enterMp3Url')"
@@ -85,13 +94,9 @@
               <span v-else>{{ scope.row.referenceText }}</span>
             </template>
           </el-table-column>
-          <el-table-column :label="$t('ttsModel.operation')" align="center" :width="isIndexTts ? 190 : 150">
+          <el-table-column :label="$t('ttsModel.operation')" align="center" width="150">
             <template slot-scope="scope">
               <template v-if="isIndexTts">
-                <el-button type="text" size="mini" :loading="previewingVoiceId === scope.row.voiceCode"
-                  :disabled="!indexRemoteVoiceMap[scope.row.voiceCode]" @click="previewIndexVoice(scope.row)">
-                  {{ previewingVoiceId === scope.row.voiceCode ? '播放中' : '试听' }}
-                </el-button>
                 <el-button type="text" size="mini" @click="openIndexVoiceDialog(scope.row)">
                   重新上传
                 </el-button>

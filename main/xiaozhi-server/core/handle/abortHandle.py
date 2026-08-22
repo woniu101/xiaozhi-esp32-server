@@ -14,6 +14,8 @@ async def handleAbortMessage(conn: "ConnectionHandler"):
     # 设置成打断状态，会自动打断llm、tts任务
     conn.close_after_chat = False
     conn.client_abort = True
+    if conn.tts is not None and hasattr(conn.tts, "cancel_current_synthesis"):
+        conn.tts.cancel_current_synthesis()
     # Treat an explicit device abort as fresh user activity. This prevents a
     # concurrently scheduled proactive turn from clearing the abort and starting
     # playback immediately after the user asked the device to stop.

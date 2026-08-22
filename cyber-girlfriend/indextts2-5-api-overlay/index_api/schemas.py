@@ -29,7 +29,7 @@ class TTSRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=100)
     text: str = Field(min_length=1, max_length=300)
     voice_id: str | None = Field(default=None, max_length=80)
-    lang: str = Field(default="ZH", min_length=2, max_length=16)
+    lang: str = Field(default="zh", min_length=2, max_length=16)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     interval_silence_ms: int = Field(default=80, ge=0, le=1000)
     max_text_tokens_per_segment: int = Field(default=120, ge=20, le=240)
@@ -47,7 +47,7 @@ class TTSRequest(BaseModel):
     @field_validator("lang")
     @classmethod
     def normalize_lang(cls, value: str) -> str:
-        return value.strip().upper()
+        return value.strip().lower()
 
 
 class VoiceRegistrationRequest(BaseModel):

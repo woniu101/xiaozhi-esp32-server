@@ -52,6 +52,8 @@ class TTSProviderBase(ABC):
         # Companion must explicitly activate dynamic voice for the current binding.
         # This prevents a model-level setting from changing non-Companion agents.
         self.current_dynamic_emotion_enabled = False
+        self._synthesis_cancel_event = threading.Event()
+        self.last_synthesis_metrics = {}
         configured_style_map = config.get("emotion_style_map", {})
         self.emotion_style_map = configured_style_map if isinstance(configured_style_map, dict) else {}
         self.report_on_last = False
@@ -145,6 +147,35 @@ class TTSProviderBase(ABC):
 
     def provider_emotion_style(self):
         return self.emotion_style_map.get(self.current_emotion_style)
+
+    def get_capabilities(self) -> dict:
+        """Describe optional provider features without leaking model specifics upstream."""
+        return {
+            "provider": self.__class__.__module__.rsplit(".", 1)[-1],
+            "streaming": self.interface_type is not InterfaceType.NON_STREAM,
+            "dynamic_emotion": False,
+            "emotion_control": "none",
+            "health_check": False,
+            "cancellable": True,
+        }
+
+    def reset_synthesis_cancel(self) -> None:
+        self._synthesis_cancel_event.clear()
+
+    def cancel_current_synthesis(self) -> None:
+        """Ask an in-flight provider request to stop at its next cancellation point."""
+        self._synthesis_cancel_event.set()
+
+    def synthesis_cancelled(self) -> bool:
+        return self._synthesis_cancel_event.is_set() or bool(
+            self.conn is not None and self.conn.client_abort
+        )
+
+    def record_synthesis_metrics(self, **metrics) -> dict:
+        """Keep the latest synthesis timings and expose them in normal logs."""
+        self.last_synthesis_metrics = metrics
+        logger.bind(tag=TAG).info(f"TTS synthesis metrics: {metrics}")
+        return metrics
 
     def generate_filename(self, extension=".wav"):
         return os.path.join(
@@ -416,6 +447,7 @@ class TTSProviderBase(ABC):
                     continue
                 if message.sentence_type == SentenceType.FIRST:
                     self.current_sentence_id = message.sentence_id
+                    self.reset_synthesis_cancel()
                     self.tts_stop_request = False
                     self.processed_chars = 0
                     self.tts_text_buff = []
@@ -515,6 +547,7 @@ class TTSProviderBase(ABC):
 
     async def close(self):
         """资源清理方法"""
+        self.cancel_current_synthesis()
         self._sentence_text_map.clear()
         if hasattr(self, "ws") and self.ws:
             await self.ws.close()

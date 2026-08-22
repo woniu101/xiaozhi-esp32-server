@@ -416,7 +416,7 @@ public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> 
             payload.put("request_id", "manager-preview-" + UUID.randomUUID());
             payload.put("voice_id", voiceId);
             payload.put("text", text.trim());
-            payload.put("lang", "ZH");
+            payload.put("lang", "zh");
             payload.put("speed", 1.0);
             String body = objectMapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder()
