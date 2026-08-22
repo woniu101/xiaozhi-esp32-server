@@ -1174,6 +1174,20 @@ TTS:
     voice: "jay_klee"
     output_dir: tmp/
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
+  IndexTTS2_5:
+    # IndexTTS2.5 Companion API，支持八维动态情绪；与旧 IndexStreamTTS 协议无关
+    type: index_tts_v2_5
+    api_url: http://192.168.18.14:8092
+    voice: "tuniang-normal"
+    lang: "ZH"
+    speed: 1.0
+    dynamic_emotion: true
+    emotion_alpha: 0.85
+    normalize_emotion: true
+    text_normalization: true
+    output_dir: tmp/
+    format: wav
+    tts_timeout: 60
   AliBLTTS:
     # 阿里百炼CosyVoice大模型流式文本语音合成
     # 可在这里找到你的 api_key https://bailian.console.aliyun.com/?apiKey=1#/api-key

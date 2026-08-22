@@ -71,6 +71,8 @@ def normalize_overlay(value: Any) -> dict[str, Any]:
             result.pop("allowed_stages")
     if isinstance(value.get("proactive_enabled"), bool):
         result["proactive_enabled"] = value["proactive_enabled"]
+    if isinstance(value.get("tts_dynamic_emotion"), bool):
+        result["tts_dynamic_emotion"] = value["tts_dynamic_emotion"]
     interval = value.get("proactive_interval_minutes")
     if isinstance(interval, (int, float)) and not isinstance(interval, bool):
         result["proactive_interval_minutes"] = max(5, min(10080, int(interval)))

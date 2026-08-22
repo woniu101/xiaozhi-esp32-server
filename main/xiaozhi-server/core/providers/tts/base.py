@@ -46,6 +46,12 @@ class TTSProviderBase(ABC):
         self.tts_audio_first_sentence = True
         self.before_stop_play_files = []
         self.current_emotion_style = "neutral"
+        self.current_emotion_intensity = 0.35
+        dynamic_emotion = str(config.get("dynamic_emotion", False)).strip().lower()
+        self.dynamic_emotion_enabled = dynamic_emotion in ("true", "1", "yes", "on")
+        # Companion must explicitly activate dynamic voice for the current binding.
+        # This prevents a model-level setting from changing non-Companion agents.
+        self.current_dynamic_emotion_enabled = False
         configured_style_map = config.get("emotion_style_map", {})
         self.emotion_style_map = configured_style_map if isinstance(configured_style_map, dict) else {}
         self.report_on_last = False
@@ -113,10 +119,28 @@ class TTSProviderBase(ABC):
         self.processed_chars = 0
         self.is_first_sentence = True
 
-    def set_emotion_style(self, style: str) -> str:
-        """Set an abstract Companion style. Unsupported providers safely use neutral."""
+    def set_emotion_style(
+        self,
+        style: str,
+        intensity: float | None = None,
+        enabled: bool | None = None,
+    ) -> str:
+        """Set the abstract Companion voice state used by capable TTS providers."""
         allowed = {"neutral", "warm", "happy", "excited", "concerned", "soft", "apologetic", "restrained"}
         self.current_emotion_style = style if style in allowed else "neutral"
+        if intensity is not None:
+            try:
+                parsed_intensity = float(intensity)
+                if math.isfinite(parsed_intensity):
+                    self.current_emotion_intensity = max(0.0, min(1.0, parsed_intensity))
+                else:
+                    self.current_emotion_intensity = 0.35
+            except (TypeError, ValueError):
+                self.current_emotion_intensity = 0.35
+        if enabled is not None:
+            self.current_dynamic_emotion_enabled = (
+                self.dynamic_emotion_enabled and bool(enabled)
+            )
         return self.current_emotion_style
 
     def provider_emotion_style(self):

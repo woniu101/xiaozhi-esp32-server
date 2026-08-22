@@ -612,6 +612,19 @@
                         </div>
                       </el-form-item>
                     </div>
+                    <div v-if="form.companionEnabled" class="dynamic-emotion-control">
+                      <div>
+                        <el-switch
+                          v-model="companionOverlayForm.tts_dynamic_emotion"
+                          :disabled="!dynamicEmotionProviderSupported"
+                          active-text="动态情绪语音"
+                        />
+                        <span class="dynamic-emotion-status">{{ dynamicEmotionStatus }}</span>
+                      </div>
+                      <span class="dynamic-emotion-help">
+                        根据 Companion 每轮的情绪方向与强度控制语气；关闭后仅保留所选音色。
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div class="advanced-section">
@@ -917,6 +930,7 @@ export default {
         allowed_stages: [],
         voice_reply_style: "",
         tool_ack_prefix: "",
+        tts_dynamic_emotion: true,
         proactive_enabled: false,
         proactive_interval_minutes: 180,
         proactive_daily_limit: 3,
@@ -983,8 +997,16 @@ export default {
         || "";
     },
     dynamicEmotionStatus() {
+      if (!this.dynamicEmotionProviderSupported) {
+        return "当前语音模型未声明支持";
+      }
+      return this.companionOverlayForm.tts_dynamic_emotion
+        ? "已启用 · IndexTTS2.5 八维情绪"
+        : "已关闭";
+    },
+    dynamicEmotionProviderSupported() {
       const id = String(this.form.model.ttsModelId || "").toLowerCase();
-      return id.includes("minimax") ? "提供器支持" : "仅基础语音（提供器未声明支持）";
+      return id.includes("indextts2_5") || id.includes("indextts2.5");
     },
     hasUnsavedChanges() {
       return Boolean(this.savedFormFingerprint) && this.formFingerprint() !== this.savedFormFingerprint;
@@ -1097,6 +1119,7 @@ export default {
           allowed_stages: Array.isArray(value.allowed_stages) ? value.allowed_stages : [],
           voice_reply_style: value.voice_reply_style || "",
           tool_ack_prefix: value.tool_ack_prefix || "",
+          tts_dynamic_emotion: value.tts_dynamic_emotion !== false,
           proactive_enabled: Boolean(value.proactive_enabled),
           proactive_interval_minutes: Number(value.proactive_interval_minutes || 180),
           proactive_daily_limit: Number(value.proactive_daily_limit || 3),
@@ -1114,8 +1137,8 @@ export default {
       let base = JSON.parse(this.form.companionOverlay || "{}");
       this.validateCompanionOverlay(base);
       Object.entries(this.companionOverlayForm).forEach(([key, value]) => {
-        const populated = key === "proactive_enabled"
-          ? value === true
+        const populated = ["proactive_enabled", "tts_dynamic_emotion"].includes(key)
+          ? typeof value === "boolean"
           : Array.isArray(value) ? value.length > 0 : Boolean(value && String(value).trim());
         if (populated) base[key] = value;
         else delete base[key];
@@ -1151,7 +1174,7 @@ export default {
       }
       const textFields = new Set(["ai_identity_notice", "user_address", "voice_reply_style", "tool_rephrase_style", "tool_ack_prefix", "proactive_timezone", "proactive_quiet_start", "proactive_quiet_end"]);
       const listFields = new Set(["allowed_stages", "intimacy_boundaries", "memory_rules", "proactive_behavior_rules", "additional_rules"]);
-      const scalarFields = new Set(["relationship_mode", "initial_stage", "proactive_enabled", "proactive_interval_minutes", "proactive_daily_limit", "proactive_rejection_cooldown_minutes", "proactive_max_unanswered"]);
+      const scalarFields = new Set(["relationship_mode", "initial_stage", "tts_dynamic_emotion", "proactive_enabled", "proactive_interval_minutes", "proactive_daily_limit", "proactive_rejection_cooldown_minutes", "proactive_max_unanswered"]);
       Object.entries(value).forEach(([key, item]) => {
         if (!textFields.has(key) && !listFields.has(key) && !scalarFields.has(key)) {
           throw new TypeError(`unsupported overlay field: ${key}`);
@@ -1160,7 +1183,9 @@ export default {
         if (listFields.has(key) && (!Array.isArray(item) || item.some(entry => typeof entry !== "string"))) {
           throw new TypeError(`${key} must be a text array`);
         }
-        if (key === "proactive_enabled" && typeof item !== "boolean") throw new TypeError(`${key} must be boolean`);
+        if (["proactive_enabled", "tts_dynamic_emotion"].includes(key) && typeof item !== "boolean") {
+          throw new TypeError(`${key} must be boolean`);
+        }
         if (key === "relationship_mode" && !["friend", "romance", "deep", "custom"].includes(item)) {
           throw new TypeError("relationship_mode is invalid");
         }
@@ -2960,6 +2985,30 @@ export default {
   font-weight: 400;
   line-height: 22px;
   padding-bottom: 2px;
+}
+
+.dynamic-emotion-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 8px 0 4px 72px;
+  padding: 9px 12px;
+  border: 1px solid #e4eafa;
+  border-radius: 8px;
+  background: #f8faff;
+  color: #697492;
+  font-size: 11px;
+}
+
+.dynamic-emotion-status {
+  margin-left: 10px;
+  color: #5476d8;
+}
+
+.dynamic-emotion-help {
+  color: #8a92a7;
+  text-align: right;
 }
 
 .function-icons {

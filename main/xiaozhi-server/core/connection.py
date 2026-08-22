@@ -1552,7 +1552,20 @@ class ConnectionHandler:
                 if emotion_flag and content is not None and content.strip():
                     presentation = resolve_presentation(self.companion_session, content)
                     if self.tts is not None and hasattr(self.tts, "set_emotion_style"):
-                        self.tts.set_emotion_style(presentation.emotion)
+                        session_overlay = (
+                            getattr(self.companion_session, "overlay", {}) or {}
+                            if self.companion_session is not None
+                            else {}
+                        )
+                        dynamic_emotion_enabled = bool(
+                            self.companion_session is not None
+                            and session_overlay.get("tts_dynamic_emotion", True)
+                        )
+                        self.tts.set_emotion_style(
+                            presentation.emotion,
+                            presentation.intensity,
+                            enabled=dynamic_emotion_enabled,
+                        )
                     if (self.features or {}).get("companion_presentation", False):
                         asyncio.run_coroutine_threadsafe(
                             send_presentation(self, presentation),

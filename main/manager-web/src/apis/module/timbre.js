@@ -93,5 +93,58 @@ export default {
                     this.updateVoice(params, callback);
                 });
             }).send();
+    },
+
+    getIndexRemoteVoices(ttsModelId, callback, errorCallback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/ttsVoice/indexTts/${ttsModelId}/voices`)
+            .method('GET')
+            .success((res) => callback(res.data))
+            .fail(errorCallback)
+            .networkFail(errorCallback)
+            .send();
+    },
+
+    syncIndexRemoteVoices(ttsModelId, callback, errorCallback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/ttsVoice/indexTts/${ttsModelId}/sync`)
+            .method('POST')
+            .success((res) => callback(res.data))
+            .fail(errorCallback)
+            .networkFail(errorCallback)
+            .send();
+    },
+
+    registerIndexVoice(ttsModelId, formData, callback, errorCallback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/ttsVoice/indexTts/${ttsModelId}/voices`)
+            .method('POST')
+            .data(formData)
+            .success((res) => callback(res.data))
+            .fail(errorCallback)
+            .networkFail(errorCallback)
+            .send();
+    },
+
+    deleteIndexVoice(ttsModelId, voiceId, callback, errorCallback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/ttsVoice/indexTts/${ttsModelId}/voices/${encodeURIComponent(voiceId)}`)
+            .method('DELETE')
+            .success((res) => callback(res.data))
+            .fail(errorCallback)
+            .networkFail(errorCallback)
+            .send();
+    },
+
+    previewIndexVoice(ttsModelId, params, callback, errorCallback) {
+        RequestService.sendRequest()
+            .url(`${getServiceUrl()}/ttsVoice/indexTts/${ttsModelId}/preview`)
+            .method('POST')
+            .data(JSON.stringify(params))
+            .type('arraybuffer')
+            .success(callback)
+            .fail(errorCallback)
+            .networkFail(errorCallback)
+            .send();
     }
 }
