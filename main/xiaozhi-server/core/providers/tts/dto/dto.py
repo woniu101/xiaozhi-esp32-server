@@ -1,5 +1,6 @@
 from enum import Enum
-from typing import Union, Optional
+import copy
+from typing import Any, Optional
 
 
 class SentenceType(Enum):
@@ -35,9 +36,18 @@ class TTSMessageDTO:
         content_detail: Optional[str] = None,
         # 如果内容类型为文件，则需要传入文件路径
         content_file: Optional[str] = None,
+        # Companion 每轮不可变表达计划；Provider 在 FIRST 消息消费时应用。
+        expression_plan: Optional[dict[str, Any]] = None,
+        turn_id: Optional[str] = None,
     ):
         self.sentence_id = sentence_id
         self.sentence_type = sentence_type
         self.content_type = content_type
         self.content_detail = content_detail
         self.content_file = content_file
+        self.expression_plan = copy.deepcopy(expression_plan) if expression_plan else None
+        self.turn_id = turn_id or (
+            str(self.expression_plan.get("turn_id") or "")
+            if self.expression_plan
+            else None
+        )

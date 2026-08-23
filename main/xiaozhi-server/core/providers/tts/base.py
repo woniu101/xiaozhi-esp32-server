@@ -47,6 +47,11 @@ class TTSProviderBase(ABC):
         self.before_stop_play_files = []
         self.current_emotion_style = "neutral"
         self.current_emotion_intensity = 0.35
+        self.current_expression_modifiers = ()
+        self.current_expression_speed = 1.0
+        self.current_expression_source = "legacy"
+        self.current_expression_turn_id = None
+        self.current_expression_sentence_id = None
         dynamic_emotion = str(config.get("dynamic_emotion", False)).strip().lower()
         self.dynamic_emotion_enabled = dynamic_emotion in ("true", "1", "yes", "on")
         # Companion must explicitly activate dynamic voice for the current binding.
@@ -147,6 +152,51 @@ class TTSProviderBase(ABC):
 
     def provider_emotion_style(self):
         return self.emotion_style_map.get(self.current_emotion_style)
+
+    def apply_expression_plan(
+        self,
+        expression_plan: dict | None,
+        *,
+        sentence_id: str | None = None,
+        turn_id: str | None = None,
+    ) -> dict:
+        """Atomically bind one turn plan to the sentence being synthesized.
+
+        A missing plan explicitly resets dynamic emotion. This is important for
+        legacy, tool and system messages: they must never inherit the previous
+        Companion turn's provider state.
+        """
+        plan = expression_plan if isinstance(expression_plan, dict) else {}
+        provider_hint = plan.get("provider_hint")
+        if not isinstance(provider_hint, dict):
+            provider_hint = {}
+        style = str(provider_hint.get("style") or "neutral")
+        intensity = plan.get("intensity", 0.35)
+        enabled = bool(plan.get("dynamic_emotion_enabled", False))
+        self.set_emotion_style(style, intensity, enabled=enabled)
+        modifiers = plan.get("modifiers") or []
+        self.current_expression_modifiers = tuple(
+            str(item) for item in modifiers if str(item).strip()
+        )
+        try:
+            speed = float(plan.get("speed", 1.0))
+            self.current_expression_speed = (
+                max(0.85, min(1.15, speed)) if math.isfinite(speed) else 1.0
+            )
+        except (TypeError, ValueError):
+            self.current_expression_speed = 1.0
+        self.current_expression_source = str(plan.get("source") or "legacy")[:24]
+        self.current_expression_turn_id = turn_id or plan.get("turn_id") or None
+        self.current_expression_sentence_id = sentence_id
+        return {
+            "style": self.current_emotion_style,
+            "intensity": self.current_emotion_intensity,
+            "enabled": self.current_dynamic_emotion_enabled,
+            "modifiers": list(self.current_expression_modifiers),
+            "speed": self.current_expression_speed,
+            "turn_id": self.current_expression_turn_id,
+            "sentence_id": self.current_expression_sentence_id,
+        }
 
     def get_capabilities(self) -> dict:
         """Describe optional provider features without leaking model specifics upstream."""
@@ -350,6 +400,8 @@ class TTSProviderBase(ABC):
         content_detail=None,
         content_file=None,
         sentence_id=None,
+        expression_plan=None,
+        turn_id=None,
     ):
         """发送一句话"""
         if not sentence_id:
@@ -368,6 +420,8 @@ class TTSProviderBase(ABC):
                     content_type=content_type,
                     content_detail=seg,
                     content_file=content_file,
+                    expression_plan=expression_plan,
+                    turn_id=turn_id,
                 )
             )
 
@@ -447,6 +501,11 @@ class TTSProviderBase(ABC):
                     continue
                 if message.sentence_type == SentenceType.FIRST:
                     self.current_sentence_id = message.sentence_id
+                    self.apply_expression_plan(
+                        message.expression_plan,
+                        sentence_id=message.sentence_id,
+                        turn_id=message.turn_id,
+                    )
                     self.reset_synthesis_cancel()
                     self.tts_stop_request = False
                     self.processed_chars = 0

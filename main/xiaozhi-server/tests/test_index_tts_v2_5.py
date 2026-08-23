@@ -94,6 +94,31 @@ class IndexTTS25ProviderTest(unittest.TestCase):
         self.assertEqual(1.0, provider.current_emotion_intensity)
         self.assertEqual(provider.emotion_vector_map["neutral"], payload["emotion"]["vector"])
 
+    def test_sentence_expression_plan_resets_instead_of_inheriting_previous_turn(self):
+        provider = self.make_provider()
+        applied = provider.apply_expression_plan(
+            {
+                "turn_id": "turn-warm",
+                "provider_hint": {"style": "warm"},
+                "intensity": 0.7,
+                "dynamic_emotion_enabled": True,
+                "modifiers": ["soft"],
+                "speed": 0.95,
+                "source": "reply",
+            },
+            sentence_id="sentence-warm",
+        )
+
+        self.assertTrue(applied["enabled"])
+        self.assertEqual("warm", applied["style"])
+        self.assertIn("emotion", provider.build_request("先说这一轮"))
+
+        reset = provider.apply_expression_plan(None, sentence_id="sentence-legacy")
+
+        self.assertFalse(reset["enabled"])
+        self.assertEqual("neutral", reset["style"])
+        self.assertNotIn("emotion", provider.build_request("不能继承上一轮"))
+
     @patch("core.providers.tts.index_tts_v2_5.post_audio", new_callable=AsyncMock)
     def test_tts_calls_stable_wav_endpoint(self, post):
         response = HttpAudioResponse(200, b"RIFF-test", "", {})

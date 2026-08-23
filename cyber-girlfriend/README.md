@@ -8,7 +8,7 @@
 - [Companion Core 活人感下一阶段开发方案](./living-presence-next-development-plan.md)：P7-P13 的输入感知、统一表达、关系、主动关心、TTS 校准与评测路线；
 - [Companion Core 改造方案](./companion-core-implementation-plan.md)：已实现的底层技术基线。
 
-P0-P6 已完成代码实现。生产部署、升级和回滚见 [部署手册](./deploy/README.md)。
+P0-P7 已完成代码实现，其中 P7 待集成/实机验收。生产部署、升级和回滚见 [部署手册](./deploy/README.md)。
 
 ## 1. 导入 dot-skill Persona
 

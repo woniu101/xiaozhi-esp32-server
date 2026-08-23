@@ -9,7 +9,12 @@ from core.companion.privacy import is_safe_memory_text
 from core.companion.relationship import RelationshipEngine
 from core.companion.repositories.base import CompanionRepository
 from core.companion.response_planner import ResponsePlanner, is_explicit_recall_request
-from core.companion.state_models import CompanionEvent, CompanionState, CompanionTurnContext
+from core.companion.state_models import (
+    CompanionEvent,
+    CompanionState,
+    CompanionTurnContext,
+    UserTurnSignal,
+)
 
 from .session import CompanionSession
 
@@ -29,6 +34,7 @@ class CompanionContextBuilder:
         events: list[CompanionEvent] | None = None,
         turn_id: str | None = None,
         track_turn: bool = True,
+        user_turn_signal: UserTurnSignal | None = None,
     ) -> CompanionTurnContext:
         effective_state = state or session.state
         explicit_recall = is_explicit_recall_request(user_message)
@@ -143,6 +149,12 @@ class CompanionContextBuilder:
                 "response_plan": plan.to_dict(),
                 "recalled_memory_ids": [item.get("id") for item in safe_memories if item.get("id") is not None],
                 "selected_example_ids": [item.get("id") for item in examples],
+                "event_types": [item.event_type for item in (events or [])],
+                "user_turn_signal": (
+                    user_turn_signal.to_diagnostic_dict()
+                    if user_turn_signal is not None
+                    else {}
+                ),
             },
         )
 

@@ -70,6 +70,67 @@ class CompanionEvent:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class UserTurnSignal:
+    """Normalized, provider-independent signals for one user turn."""
+
+    turn_id: str
+    text: str
+    source: str = "voice"
+    speaker: str | None = None
+    language: str | None = None
+    acoustic_emotion: str | None = None
+    acoustic_confidence: float = 0.0
+    text_emotion: str | None = None
+    text_confidence: float = 0.0
+    valence: float = 0.5
+    arousal: float = 0.35
+
+    def to_diagnostic_dict(self) -> dict[str, Any]:
+        """Return affect metadata without persisting raw dialogue or speaker names."""
+        return {
+            "source": self.source,
+            "hasSpeaker": bool(self.speaker),
+            "language": self.language,
+            "acousticEmotion": self.acoustic_emotion,
+            "acousticConfidence": round(self.acoustic_confidence, 3),
+            "textEmotion": self.text_emotion,
+            "textConfidence": round(self.text_confidence, 3),
+            "valence": round(self.valence, 3),
+            "arousal": round(self.arousal, 3),
+        }
+
+
+@dataclass(frozen=True)
+class TurnExpressionPlan:
+    """One immutable product-level expression decision for a complete turn."""
+
+    turn_id: str
+    primary_style: str = "neutral"
+    modifiers: tuple[str, ...] = ()
+    intensity: float = 0.35
+    speed: float = 1.0
+    reason_codes: tuple[str, ...] = ()
+    device_expression: str = "neutral"
+    provider_hint: dict[str, Any] = field(default_factory=lambda: {"style": "neutral"})
+    dynamic_emotion_enabled: bool = False
+    source: str = "reply"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "turn_id": self.turn_id,
+            "primary_style": self.primary_style,
+            "modifiers": list(self.modifiers),
+            "intensity": round(self.intensity, 3),
+            "speed": round(self.speed, 3),
+            "reason_codes": list(self.reason_codes),
+            "device_expression": self.device_expression,
+            "provider_hint": dict(self.provider_hint),
+            "dynamic_emotion_enabled": self.dynamic_emotion_enabled,
+            "source": self.source,
+        }
+
+
 @dataclass
 class MemoryCandidate:
     memory_type: str

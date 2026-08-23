@@ -1,11 +1,8 @@
 # Companion Core 活人感下一阶段开发方案
 
-> 状态：Planned v1.0
->
+> 状态：Active v1.1（P7 代码已实现，待集成/实机验收）
 > 更新日期：2026-08-22
->
 > 适用基线：`cyber-girlfriend-final-product-plan.md` 的 P0-P6 已实现版本
->
 > 目标：指导后续 P7-P13 开发，使人物、关系、记忆、主动行为和声音形成同一套可验证的行为链路
 
 ## 1. 结论与开发重点
@@ -155,7 +152,7 @@ class SentenceTtsEnvelope:
 
 ## 4. 分阶段实施
 
-## P7：统一输入与每轮表达计划
+## P7：统一输入与每轮表达计划——代码已实现，待集成/实机验收
 
 目标：先解决最影响体验的“听错情绪、文本与声音不一致、上一轮语气串到下一轮”。
 
@@ -165,7 +162,7 @@ class SentenceTtsEnvelope:
 2. 让事件提取器同时消费文本、声学情绪与置信度；
 3. 合并 `ResponsePlanner`、`EmotionEngine.describe()` 和 `resolve_presentation()` 的表达决策入口；
 4. 生成一次 `TurnExpressionPlan`，提供给 Prompt、TTS、设备表现和诊断；
-5. 使用 `SentenceTtsEnvelope` 替换 TTS Provider 的全局 `current_emotion_style` 依赖；
+5. 使用携带 `turn_id + sentence_id + expression_plan` 的 `TTSMessageDTO` 作为句子信封，替换会话线程直接修改 Provider 全局情绪的方式；
 6. 主动回复和工具回复也必须显式生成新计划；
 7. 最近一轮诊断展示最终主风格、修饰词、强度、Provider 映射和降级原因。
 
@@ -187,6 +184,19 @@ class SentenceTtsEnvelope:
 - 打断上一轮后不播放上一轮迟到音频；
 - 文本计划、TTS 参数和设备表情使用相同主风格；
 - 不支持动态情绪的 TTS 自动退化为普通合成。
+
+### 2026-08-22 实施记录
+
+- 新增 `UserTurnSignal`，兼容纯文本、旧 emoji JSON 与新版 FunASR 标签 JSON；
+- FunASR 保留稳定情绪标签，emoji 改为独立展示元数据；
+- 声学情绪与文本规则共同进入低延迟事件提取，低置信度不推动强情绪；
+- 新增 `TurnExpressionPlan`，使用 8 个产品主风格和 4 个修饰词；
+- 普通回复、递归工具回复、旧意图工具回复和主动回复的文本/TTS 共用同一计划；
+- `TTSMessageDTO` 携带 `turn_id + sentence_id + expression_plan`，FIRST 消息消费时原子绑定；
+- 无表达计划的旧消息会显式重置为 neutral 并关闭动态情绪，避免继承上一轮状态；
+- 最近一轮诊断增加脱敏后的用户信号与表达计划，不保存原始对话和说话人姓名；
+- Python 全量测试 116 项通过，其中 Companion 测试 73 项通过；
+- 尚需在 GPT-SoVITS V2、IndexTTS2.5 和真实设备上完成开心 → 悲伤 → 工具 → 主动回复的连续实机验收。
 
 ## P8：情绪引擎 2.0
 
@@ -417,7 +427,7 @@ IndexTTS2.5 的 8 个原生维度按部署接口定义保留，例如 happy、an
 | 8 | P12 TTS 表达校准 | GPT 预设与 Index 向量档案 | P7、P8 |
 | 9 | P13 固定回归集 | 自动报告与实机验收表 | 全部 |
 
-P7 应作为下一个实际开发迭代。P8-P12 可以先设计数据结构，但不要在 P7 完成前同时改动多条运行链路。
+P7 已完成代码实现；下一个实际开发迭代为 P8 情绪引擎 2.0。P7 的跨 Provider、跨设备实机验收应与 P8 开发并行进行，但不能跳过。
 
 ## 6. 数据库与接口演进建议
 

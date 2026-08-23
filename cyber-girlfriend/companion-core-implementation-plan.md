@@ -1,7 +1,7 @@
 # CyberGirlfriend Companion Core 技术基线
 
-> 状态：Implemented Baseline v5.0
-> 更新日期：2026-08-20
+> 状态：Implemented Baseline v6.0（P7 待集成/实机验收）
+> 更新日期：2026-08-22
 > 用途：指导 Companion Core 后续调试、重构和扩展。产品范围以 `cyber-girlfriend-final-product-plan.md` 为准。
 
 ## 1. 设计目标
@@ -48,6 +48,7 @@ main/xiaozhi-server/core/companion/
 ├── context_builder.py
 ├── event_extractor.py
 ├── example_selector.py
+├── input_signal.py
 ├── manager.py
 ├── latency.py
 ├── models.py
@@ -178,8 +179,9 @@ RelationshipState:
 ### 5.1 before_turn
 
 ```text
-CompanionManager.before_turn(connection, user_text)
+CompanionManager.before_turn(connection, UserTurnSignal)
   -> resolve active Persona
+  -> merge acoustic and deterministic text affect
   -> decay committed user-agent state
   -> extract current-turn signals
   -> preview emotion/relationship without incrementing revision
@@ -283,7 +285,14 @@ stranger -> familiar -> friend -> ambiguous -> lover -> intimate
 - 即时动作：执行成功后可用 `tool_ack_prefix` 给出短确认；失败和未找到结果不添加成功确认语；
 - 信息结果：保持数值和事实不变，只按 `tool_rephrase_style` 重写表达。
 
-`presentation.py` 根据情绪和人物配置产生 TTS style / 表现提示。TTS Provider 声明支持时接收 emotion style；不支持时忽略该参数并继续合成。
+输入与表现层采用两个稳定契约：
+
+- `UserTurnSignal` 保存干净文本、语言、可选说话人、声学/文本情绪、置信度和 valence/arousal；
+- `TurnExpressionPlan` 保存本轮唯一的产品主风格、修饰词、强度、语速、设备表情和 Provider 映射。
+
+`presentation.py` 只生成一次 `TurnExpressionPlan`。Response Prompt、TTS 和支持 Companion 表现元数据的设备共同消费该计划。产品层主风格为 `neutral/intimate/joyful/playful/excited/comforting/vulnerable/annoyed`，GPT-SoVITS/IndexTTS 等 Provider 通过 `provider_hint` 映射到各自现有参数；不支持情绪参数的 Provider 继续普通合成。
+
+`TTSMessageDTO` 携带 `turn_id + sentence_id + expression_plan`。普通、工具、错误和主动回复的 FIRST/MIDDLE/LAST 消息使用同一计划；TTS 队列消费 FIRST 时原子应用，旧消息缺少计划时强制重置 neutral 并关闭动态情绪，禁止继承上一轮 Provider 状态。
 
 ## 9. Repository
 
@@ -307,7 +316,7 @@ manager-api Repository 使用 `data/companion/commit_outbox.db` 保存短暂失�
 
 ### 9.3 非敏感诊断与实时指标
 
-每个完成轮次在 `diagnostic_json` 保存 Persona/版本、关系模式、回应计划、事件类型、召回记忆 ID、候选记忆操作、状态前后和阶段耗时；不保存用户/助手原文。角色配置页可查看最近一轮。
+每个完成轮次在 `diagnostic_json` 保存 Persona/版本、关系模式、回应计划、脱敏 UserTurnSignal、TurnExpressionPlan、事件类型、召回记忆 ID、候选记忆操作、状态前后和阶段耗时；不保存用户/助手原文或说话人姓名。角色配置页可查看最近一轮。
 
 实时语音链记录 ASR 完成到 LLM 首输出、TTS 文本入队和首包音频，以及整轮播放和打断停止指标。被中断或已经过期的 sentence id 在发送音频前被过滤；重连打开 Companion Session 时区分新状态与持久状态恢复计数。
 
@@ -413,12 +422,16 @@ manager-api 需执行 Maven 测试；迁移需在空 MySQL 库应用完整 chang
 
 ## 15. 后续扩展顺序
 
-1. 真实语音回归集、自动评测看板和阈值/Prompt 调优；
-2. 为 Outbox 待提交数量和最老积压时长配置生产告警，并验证服务重启后的真实重放；
-3. 把主动关心状态迁移到持久/分布式调度器，支持服务重启、多实例和离线推送；
-4. 在真实 Embedding 服务上验收召回准确率和延迟，再决定是否使用向量库；
-5. GPT-SoVITS/云 TTS 音色、语气和 ESP32 延迟验收；
-6. 头像/Live2D/表情映射与离线主动推送。
+P7 已完成代码实现。P8 起的完整实现顺序和验收矩阵以
+[`living-presence-next-development-plan.md`](./living-presence-next-development-plan.md) 为准。
+
+1. 情绪引擎 2.0：拆分 UserAffect、CompanionMood 与 TurnExpression；
+2. 真实语音回归集、自动评测看板和阈值/Prompt 调优；
+3. 为 Outbox 待提交数量和最老积压时长配置生产告警，并验证服务重启后的真实重放；
+4. 把主动关心状态迁移到持久/分布式调度器，支持服务重启、多实例和离线推送；
+5. 在真实 Embedding 服务上验收召回准确率和延迟，再决定是否使用向量库；
+6. GPT-SoVITS/IndexTTS2.5 音色校准、语气和 ESP32 延迟验收；
+7. 头像/Live2D/表情映射与离线主动推送。
 
 在线设备的主动消息调度已实现频率、安静时段、每日上限、拒绝冷却和无回应退避；进程重启后的调度状态、
 多实例协调和离线推送仍属于后续扩展。

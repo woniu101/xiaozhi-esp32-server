@@ -519,6 +519,14 @@ companion:
 - 主动生成竞态丢弃、标准 `tts/start` 状态切换和 TTS 句子 ID 修复；
 - Outbox/主动关心健康聚合和运行指标。
 
+### P7：结构化输入与统一表达计划——代码已实现，待集成/实机验收
+
+- FunASR 声学情绪以结构化 `UserTurnSignal` 进入 Companion，兼容旧 JSON 与纯文本；
+- 文本、TTS 和设备表现共用不可变 `TurnExpressionPlan`；
+- 表达计划按 `turn_id + sentence_id` 绑定到 TTS 队列，旧消息显式重置中性；
+- 普通、工具、错误和在线主动回复均不会再依赖首个 LLM 分片修改 Provider 全局情绪；
+- 实现细节与下一阶段顺序见 `living-presence-next-development-plan.md`。
+
 ## 16. 下一步开发顺序
 
 P7-P13 的实现级数据结构、模块改动、验收门槛和测试矩阵见

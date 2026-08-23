@@ -6,7 +6,13 @@ import hashlib
 from datetime import timedelta
 from typing import Protocol
 
-from .state_models import CompanionEvent, CompletedTurn, MemoryCandidate, utc_now
+from .state_models import (
+    CompanionEvent,
+    CompletedTurn,
+    MemoryCandidate,
+    UserTurnSignal,
+    utc_now,
+)
 from .privacy import is_safe_memory_text
 from .semantic_text import semantic_overlap
 
@@ -90,13 +96,44 @@ class RuleBasedEventExtractor:
         "meaningful_disclosure": (r"其实我|我一直|我从来没|我最担心|我害怕", 0.72),
     }
 
-    def extract_pre_turn(self, user_message: str) -> list[CompanionEvent]:
+    ACOUSTIC_EVENTS = {
+        "HAPPY": "user_expressed_joy",
+        "SAD": "user_expressed_distress",
+        "ANGRY": "user_expressed_distress",
+        "FEARFUL": "user_expressed_distress",
+        "DISGUSTED": "user_expressed_distress",
+    }
+
+    def extract_pre_turn(self, user_message: str | UserTurnSignal) -> list[CompanionEvent]:
         """Extract only low-latency signals that are safe to preview before the reply."""
-        text = str(user_message or "").strip()
+        signal = user_message if isinstance(user_message, UserTurnSignal) else None
+        text = str(signal.text if signal is not None else user_message or "").strip()
         events = []
         for event_type, (pattern, confidence) in self.EVENT_PATTERNS.items():
             if re.search(pattern, text, re.I):
                 events.append(CompanionEvent(event_type, confidence))
+        if signal is not None and signal.acoustic_confidence >= 0.55:
+            acoustic_event = self.ACOUSTIC_EVENTS.get(signal.acoustic_emotion or "")
+            if acoustic_event:
+                existing = next(
+                    (item for item in events if item.event_type == acoustic_event), None
+                )
+                payload = {
+                    "source": "acoustic",
+                    "emotion": signal.acoustic_emotion,
+                }
+                if existing is None:
+                    events.append(
+                        CompanionEvent(
+                            acoustic_event,
+                            signal.acoustic_confidence,
+                            payload,
+                        )
+                    )
+                else:
+                    existing.confidence = max(
+                        existing.confidence, signal.acoustic_confidence
+                    )
         return events
 
     def extract(

@@ -48,11 +48,14 @@ from core.utils import textUtils
 from core.companion.runtime import get_companion_manager
 from core.companion.latency import ConversationLatencyTracker
 from core.companion.state_models import CompanionIdentity
+from core.companion.input_signal import parse_user_turn_signal
 from core.companion.turn_recorder import TurnRecorder
 from core.companion.privacy import sanitize_tool_output
 from core.companion.presentation import (
     apply_success_acknowledgement,
-    resolve_presentation,
+    presentation_from_plan,
+    render_expression_plan,
+    resolve_turn_expression_plan,
     send_presentation,
 )
 from core.companion.observability import metrics
@@ -1067,7 +1070,13 @@ class ConnectionHandler:
             self.companion_session = None
             self.logger.bind(tag=TAG).error(f"Companion 初始化失败，已回退基础聊天: {e}")
 
-    def _build_companion_context(self, query, turn_id=None, track_turn=True):
+    def _build_companion_context(
+        self,
+        query,
+        turn_id=None,
+        track_turn=True,
+        user_turn_signal=None,
+    ):
         if not query or self.companion_manager is None or self.companion_session is None:
             return None
         try:
@@ -1075,7 +1084,7 @@ class ConnectionHandler:
             future = asyncio.run_coroutine_threadsafe(
                 self.companion_manager.before_turn(
                     self.companion_session,
-                    query,
+                    user_turn_signal or query,
                     turn_id=turn_id,
                     track_turn=track_turn,
                 ),
@@ -1186,11 +1195,17 @@ class ConnectionHandler:
             )
             if not text:
                 continue
+            proactive_expression = resolve_turn_expression_plan(
+                self.companion_session,
+                turn_id=uuid.uuid4().hex,
+                source="proactive",
+            )
             playback = await enqueue_online_proactive_playback(
                 self,
                 text,
                 expected_user_turn,
                 send_state=self._send_companion_tts_state,
+                expression_plan=proactive_expression.to_dict(),
             )
             if playback.sent:
                 delivered_at = time.time()
@@ -1224,6 +1239,10 @@ class ConnectionHandler:
     def _generate_companion_proactive_message(self):
         try:
             rules = self.companion_session.overlay.get("proactive_behavior_rules") or []
+            proactive_expression = resolve_turn_expression_plan(
+                self.companion_session,
+                source="proactive",
+            )
             instruction = (
                 "在用户一段时间没有说话后，以当前人物身份主动发起一句自然、简短、不施压的关心。"
                 "不要假装用户刚刚说过话，不要虚构事件，不要要求用户必须回复。"
@@ -1232,6 +1251,7 @@ class ConnectionHandler:
                 instruction += "主动行为偏好：" + "；".join(
                     str(item)[:200] for item in rules[:6]
                 )
+            instruction += "\n" + render_expression_plan(proactive_expression)
             context = self._build_companion_context(instruction, track_turn=False)
             messages = self.dialogue.get_llm_dialogue_with_memory(
                 companion_context=context,
@@ -1368,6 +1388,8 @@ class ConnectionHandler:
             depth=0,
             turn_recorder=None,
             companion_context=None,
+            user_turn_signal=None,
+            expression_plan=None,
     ):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
@@ -1381,7 +1403,59 @@ class ConnectionHandler:
                 self.last_companion_user_turn_time = time.time()
             turn_recorder = TurnRecorder(query or "")
             self.active_turn_recorder = turn_recorder
-            companion_context = self._build_companion_context(query, turn_id=turn_recorder.turn_id)
+            user_turn_signal = parse_user_turn_signal(
+                user_turn_signal or query,
+                turn_id=turn_recorder.turn_id,
+                source="voice",
+            )
+            companion_context = self._build_companion_context(
+                query,
+                turn_id=turn_recorder.turn_id,
+                user_turn_signal=user_turn_signal,
+            )
+            expression_plan = resolve_turn_expression_plan(
+                self.companion_session,
+                companion_context,
+                user_turn_signal,
+                turn_id=turn_recorder.turn_id,
+                source="reply",
+            )
+            if companion_context is not None:
+                companion_context.response_plan_prompt = "\n\n".join(
+                    block
+                    for block in (
+                        companion_context.response_plan_prompt,
+                        render_expression_plan(expression_plan),
+                    )
+                    if block
+                )
+            expression_diagnostic = expression_plan.to_dict()
+            try:
+                tts_capabilities = (
+                    self.tts.get_capabilities()
+                    if self.tts is not None and hasattr(self.tts, "get_capabilities")
+                    else {}
+                )
+            except Exception:
+                tts_capabilities = {}
+            degradation_reason = None
+            if (
+                expression_plan.dynamic_emotion_enabled
+                and not tts_capabilities.get("dynamic_emotion", False)
+            ):
+                degradation_reason = "provider_dynamic_emotion_unavailable"
+            turn_recorder.add_diagnostic(
+                {
+                    "userTurnSignal": user_turn_signal.to_diagnostic_dict(),
+                    "expressionPlan": expression_diagnostic,
+                    "ttsExpression": {
+                        "provider": tts_capabilities.get("provider"),
+                        "emotionControl": tts_capabilities.get("emotion_control", "none"),
+                        "providerStyle": expression_plan.provider_hint.get("style"),
+                        "degradationReason": degradation_reason,
+                    },
+                }
+            )
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
             turn_recorder.transport_id = current_sentence_id
@@ -1400,11 +1474,34 @@ class ConnectionHandler:
                     sentence_id=current_sentence_id,
                     sentence_type=SentenceType.FIRST,
                     content_type=ContentType.ACTION,
+                    expression_plan=expression_plan.to_dict(),
+                    turn_id=turn_recorder.turn_id,
                 )
             )
+            if (
+                self.companion_session is not None
+                and (self.features or {}).get("companion_presentation", False)
+            ):
+                asyncio.run_coroutine_threadsafe(
+                    send_presentation(self, presentation_from_plan(expression_plan)),
+                    self.loop,
+                )
         else:
             # 递归调用时，使用当前的sentence_id
             current_sentence_id = self.sentence_id
+
+        if expression_plan is None:
+            expression_plan = resolve_turn_expression_plan(
+                self.companion_session,
+                companion_context,
+                user_turn_signal,
+                turn_id=getattr(turn_recorder, "turn_id", None),
+                source="reply",
+            )
+        expression_payload = expression_plan.to_dict()
+        expression_turn_id = expression_plan.turn_id or getattr(
+            turn_recorder, "turn_id", None
+        )
 
         # 设置最大递归深度，避免无限循环，可根据实际需求调整
         MAX_DEPTH = 5
@@ -1495,7 +1592,9 @@ class ConnectionHandler:
         # 支持多个并行工具调用 - 使用列表存储
         tool_calls_list = []  # 格式: [{"id": "", "name": "", "arguments": ""}]
         content_arguments = ""
-        emotion_flag = True
+        # Companion turns already emitted the unified plan before LLM streaming.
+        # Legacy agents keep the original emoji-from-text fallback.
+        emotion_flag = self.companion_session is None
         try:
             for response in llm_responses:
                 if self.client_abort:
@@ -1541,6 +1640,8 @@ class ConnectionHandler:
                                                 sentence_type=SentenceType.MIDDLE,
                                                 content_type=ContentType.TEXT,
                                                 content_detail=new_part,
+                                                expression_plan=expression_payload,
+                                                turn_id=expression_turn_id,
                                             )
                                         )
                                         if tracker is not None:
@@ -1548,30 +1649,9 @@ class ConnectionHandler:
                 else:
                     content = response
 
-                # 在llm回复中获取情绪表情，一轮对话只在开头获取一次
+                # 非 Companion 智能体继续沿用原有文本 emoji 表现。
                 if emotion_flag and content is not None and content.strip():
-                    presentation = resolve_presentation(self.companion_session, content)
-                    if self.tts is not None and hasattr(self.tts, "set_emotion_style"):
-                        session_overlay = (
-                            getattr(self.companion_session, "overlay", {}) or {}
-                            if self.companion_session is not None
-                            else {}
-                        )
-                        dynamic_emotion_enabled = bool(
-                            self.companion_session is not None
-                            and session_overlay.get("tts_dynamic_emotion", True)
-                        )
-                        self.tts.set_emotion_style(
-                            presentation.emotion,
-                            presentation.intensity,
-                            enabled=dynamic_emotion_enabled,
-                        )
-                    if (self.features or {}).get("companion_presentation", False):
-                        asyncio.run_coroutine_threadsafe(
-                            send_presentation(self, presentation),
-                            self.loop,
-                        )
-                    elif (self.features or {}).get("emoji", True):
+                    if (self.features or {}).get("emoji", True):
                         asyncio.run_coroutine_threadsafe(
                             textUtils.get_emotion(self, content),
                             self.loop,
@@ -1592,6 +1672,8 @@ class ConnectionHandler:
                                 sentence_type=SentenceType.MIDDLE,
                                 content_type=ContentType.TEXT,
                                 content_detail=content,
+                                expression_plan=expression_payload,
+                                turn_id=expression_turn_id,
                             )
                         )
                         if tracker is not None:
@@ -1606,6 +1688,8 @@ class ConnectionHandler:
                     sentence_type=SentenceType.MIDDLE,
                     content_type=ContentType.TEXT,
                     content_detail=get_system_error_response(self.config),
+                    expression_plan=expression_payload,
+                    turn_id=expression_turn_id,
                 )
             )
             if depth == 0:
@@ -1614,6 +1698,8 @@ class ConnectionHandler:
                         sentence_id=current_sentence_id,
                         sentence_type=SentenceType.LAST,
                         content_type=ContentType.ACTION,
+                        expression_plan=expression_payload,
+                        turn_id=expression_turn_id,
                     )
                 )
                 self._finalize_companion_turn(turn_recorder)
@@ -1678,6 +1764,8 @@ class ConnectionHandler:
                                             sentence_type=SentenceType.MIDDLE,
                                             content_type=ContentType.TEXT,
                                             content_detail=remaining,
+                                            expression_plan=expression_payload,
+                                            turn_id=expression_turn_id,
                                         )
                                     )
                                     tracker = self.companion_turn_latency.get(current_sentence_id)
@@ -1695,6 +1783,8 @@ class ConnectionHandler:
                                     sentence_id=current_sentence_id,
                                     sentence_type=SentenceType.LAST,
                                     content_type=ContentType.ACTION,
+                                    expression_plan=expression_payload,
+                                    turn_id=expression_turn_id,
                                 )
                             )
                             self._finalize_companion_turn(turn_recorder)
@@ -1776,6 +1866,7 @@ class ConnectionHandler:
                         streamed_text=streamed_text,
                         turn_recorder=turn_recorder,
                         companion_context=companion_context,
+                        expression_plan=expression_plan,
                     )
 
         # 存储对话内容
@@ -1792,6 +1883,8 @@ class ConnectionHandler:
                     sentence_id=current_sentence_id,
                     sentence_type=SentenceType.LAST,
                     content_type=ContentType.ACTION,
+                    expression_plan=expression_payload,
+                    turn_id=expression_turn_id,
                 )
             )
             # 使用lambda延迟计算，只有在DEBUG级别时才执行get_llm_dialogue()
@@ -1811,6 +1904,7 @@ class ConnectionHandler:
             streamed_text="",
             turn_recorder=None,
             companion_context=None,
+            expression_plan=None,
     ):
         need_llm_tools = []
         record_tools = []
@@ -1830,7 +1924,16 @@ class ConnectionHandler:
                         f"Skipping duplicate TTS for tool {tool_call_data['name']}, already streamed"
                     )
                 else:
-                    self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
+                    expression_payload = (
+                        expression_plan.to_dict() if expression_plan is not None else None
+                    )
+                    self.tts.tts_one_sentence(
+                        self,
+                        ContentType.TEXT,
+                        content_detail=text,
+                        expression_plan=expression_payload,
+                        turn_id=getattr(turn_recorder, "turn_id", None),
+                    )
                     self.tts.store_tts_text(self.sentence_id, text)
                     if turn_recorder is not None:
                         turn_recorder.append_assistant_chunk(text)
@@ -1930,6 +2033,7 @@ class ConnectionHandler:
                 depth=depth + 1,
                 turn_recorder=turn_recorder,
                 companion_context=companion_context,
+                expression_plan=expression_plan,
             )
 
     def _report_worker(self):

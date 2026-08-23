@@ -31,6 +31,7 @@ async def enqueue_online_proactive_playback(
     expected_user_turn: float | None,
     *,
     send_state: Callable[..., Awaitable[None]],
+    expression_plan: dict | None = None,
 ) -> OnlineProactivePlaybackResult:
     """Start a server-initiated online TTS turn using the standard device protocol.
 
@@ -62,7 +63,13 @@ async def enqueue_online_proactive_playback(
             return OnlineProactivePlaybackResult(False, "user_active", sentence_id)
 
         conn.tts.tts_text_queue.put(
-            TTSMessageDTO(sentence_id, SentenceType.FIRST, ContentType.ACTION)
+            TTSMessageDTO(
+                sentence_id,
+                SentenceType.FIRST,
+                ContentType.ACTION,
+                expression_plan=expression_plan,
+                turn_id=(expression_plan or {}).get("turn_id"),
+            )
         )
         conn.tts.tts_text_queue.put(
             TTSMessageDTO(
@@ -70,10 +77,18 @@ async def enqueue_online_proactive_playback(
                 SentenceType.MIDDLE,
                 ContentType.TEXT,
                 content_detail=message,
+                expression_plan=expression_plan,
+                turn_id=(expression_plan or {}).get("turn_id"),
             )
         )
         conn.tts.tts_text_queue.put(
-            TTSMessageDTO(sentence_id, SentenceType.LAST, ContentType.ACTION)
+            TTSMessageDTO(
+                sentence_id,
+                SentenceType.LAST,
+                ContentType.ACTION,
+                expression_plan=expression_plan,
+                turn_id=(expression_plan or {}).get("turn_id"),
+            )
         )
         return OnlineProactivePlaybackResult(True, "sent", sentence_id)
     except Exception as error:

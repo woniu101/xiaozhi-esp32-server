@@ -13,11 +13,12 @@ from core.handle.sendAudioHandle import send_stt_message
 from core.handle.reportHandle import enqueue_tool_report
 from core.utils.util import remove_punctuation_and_length
 from core.providers.tts.dto.dto import TTSMessageDTO, SentenceType
+from core.companion.presentation import render_expression_plan, resolve_turn_expression_plan
 
 TAG = __name__
 
 
-async def handle_user_intent(conn: "ConnectionHandler", text):
+async def handle_user_intent(conn: "ConnectionHandler", text, user_turn_signal=None):
     # 预处理输入文本，处理可能的JSON格式
     try:
         if text.strip().startswith("{") and text.strip().endswith("}"):
@@ -47,7 +48,12 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
     # 会话开始时生成sentence_id
     conn.sentence_id = str(uuid.uuid4().hex)
     # 处理各种意图
-    return await process_intent_result(conn, intent_result, text)
+    return await process_intent_result(
+        conn,
+        intent_result,
+        text,
+        user_turn_signal=user_turn_signal,
+    )
 
 
 async def check_direct_exit(conn: "ConnectionHandler", text):
@@ -81,12 +87,25 @@ async def analyze_intent_with_llm(conn: "ConnectionHandler", text):
 
 
 async def process_intent_result(
-    conn: "ConnectionHandler", intent_result, original_text
+    conn: "ConnectionHandler", intent_result, original_text, user_turn_signal=None
 ):
     """处理意图识别结果"""
     try:
         # 尝试将结果解析为JSON
         intent_data = json.loads(intent_result)
+        sentence_id = conn.sentence_id
+        expression_plan_value = resolve_turn_expression_plan(
+            getattr(conn, "companion_session", None),
+            user_signal=user_turn_signal,
+            turn_id=getattr(user_turn_signal, "turn_id", None),
+            source="tool",
+        )
+        expression_plan = expression_plan_value.to_dict()
+        expression_prompt = (
+            render_expression_plan(expression_plan_value)
+            if getattr(conn, "companion_session", None) is not None
+            else ""
+        )
 
         # 检查是否有function_call
         if "function_call" in intent_data:
@@ -116,7 +135,8 @@ async def process_intent_result(
                                         今天日期：{today_date} ({today_weekday})
                                         今天农历：{lunar_date}
 
-                                        请根据以上信息回答用户的问题：{original_text}"""
+                                        请根据以上信息回答用户的问题：{original_text}
+                                        {expression_prompt}"""
 
                     # 使用异步调用避免阻塞事件循环，影响其他设备的音频播放
                     try:
@@ -128,7 +148,12 @@ async def process_intent_result(
                         conn.logger.bind(tag=TAG).error(f"LLM生成回复失败: {e}")
                         response = None
                     if response:
-                        speak_txt(conn, response)
+                        speak_txt(
+                            conn,
+                            response,
+                            sentence_id=sentence_id,
+                            expression_plan=expression_plan,
+                        )
 
                 conn.executor.submit(process_context_result)
                 return True
@@ -189,14 +214,22 @@ async def process_intent_result(
                     if result.action == Action.RESPONSE:  # 直接回复前端
                         text = result.response
                         if text is not None:
-                            speak_txt(conn, text)
+                            speak_txt(
+                                conn,
+                                text,
+                                sentence_id=sentence_id,
+                                expression_plan=expression_plan,
+                            )
                     elif result.action == Action.REQLLM:  # 调用函数后再请求llm生成回复
                         text = result.result
                         conn.dialogue.put(Message(role="tool", content=text))
                         # 使用异步调用避免阻塞事件循环，影响其他设备的音频播放
                         try:
                             llm_result = asyncio.run_coroutine_threadsafe(
-                                conn.intent.replyResult(text, original_text),
+                                conn.intent.replyResult(
+                                    f"{expression_prompt}\n工具结果：{text}" if expression_prompt else text,
+                                    original_text,
+                                ),
                                 conn.loop,
                             ).result()
                         except Exception as e:
@@ -204,14 +237,24 @@ async def process_intent_result(
                             llm_result = text
                         if llm_result is None:
                             llm_result = text
-                        speak_txt(conn, llm_result)
+                        speak_txt(
+                            conn,
+                            llm_result,
+                            sentence_id=sentence_id,
+                            expression_plan=expression_plan,
+                        )
                     elif (
                         result.action == Action.NOTFOUND
                         or result.action == Action.ERROR
                     ):
                         text = result.response if result.response else result.result
                         if text is not None:
-                            speak_txt(conn, text)
+                            speak_txt(
+                                conn,
+                                text,
+                                sentence_id=sentence_id,
+                                expression_plan=expression_plan,
+                            )
                     elif function_name != "play_music":
                         # For backward compatibility with original code
                         # 获取当前最新的文本索引
@@ -219,7 +262,12 @@ async def process_intent_result(
                         if text is None:
                             text = result.result
                         if text is not None:
-                            speak_txt(conn, text)
+                            speak_txt(
+                                conn,
+                                text,
+                                sentence_id=sentence_id,
+                                expression_plan=expression_plan,
+                            )
 
             # 将函数执行放在线程池中
             conn.executor.submit(process_function_call)
@@ -230,23 +278,42 @@ async def process_intent_result(
         return False
 
 
-def speak_txt(conn: "ConnectionHandler", text):
+def speak_txt(
+    conn: "ConnectionHandler",
+    text,
+    *,
+    sentence_id=None,
+    expression_plan=None,
+):
+    sentence_id = sentence_id or conn.sentence_id
+    turn_id = (expression_plan or {}).get("turn_id")
     # 记录文本到 sentence_id 映射
-    conn.tts.store_tts_text(conn.sentence_id, text)
+    conn.tts.store_tts_text(sentence_id, text)
 
     conn.tts.tts_text_queue.put(
         TTSMessageDTO(
-            sentence_id=conn.sentence_id,
+            sentence_id=sentence_id,
             sentence_type=SentenceType.FIRST,
             content_type=ContentType.ACTION,
+            expression_plan=expression_plan,
+            turn_id=turn_id,
         )
     )
-    conn.tts.tts_one_sentence(conn, ContentType.TEXT, content_detail=text)
+    conn.tts.tts_one_sentence(
+        conn,
+        ContentType.TEXT,
+        content_detail=text,
+        sentence_id=sentence_id,
+        expression_plan=expression_plan,
+        turn_id=turn_id,
+    )
     conn.tts.tts_text_queue.put(
         TTSMessageDTO(
-            sentence_id=conn.sentence_id,
+            sentence_id=sentence_id,
             sentence_type=SentenceType.LAST,
             content_type=ContentType.ACTION,
+            expression_plan=expression_plan,
+            turn_id=turn_id,
         )
     )
     conn.dialogue.put(Message(role="assistant", content=text))

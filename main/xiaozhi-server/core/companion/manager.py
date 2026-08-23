@@ -9,11 +9,17 @@ from time import perf_counter
 
 from core.companion.context_builder import CompanionContextBuilder
 from core.companion.event_extractor import RuleBasedEventExtractor
+from core.companion.input_signal import enrich_text_affect, parse_user_turn_signal
 from core.companion.observability import metrics
 from core.companion.overlay import effective_overlay
 from core.companion.repositories.base import CompanionRepository
 from core.companion.session import CompanionSession
-from core.companion.state_models import CompanionIdentity, CompanionTurnContext, CompletedTurn
+from core.companion.state_models import (
+    CompanionIdentity,
+    CompanionTurnContext,
+    CompletedTurn,
+    UserTurnSignal,
+)
 from core.companion.state_reducer import StateReducer
 
 
@@ -64,7 +70,7 @@ class CompanionManager:
     async def before_turn(
         self,
         session: CompanionSession,
-        user_message: str,
+        user_message: str | UserTurnSignal,
         turn_id: str | None = None,
         track_turn: bool = True,
     ) -> CompanionTurnContext:
@@ -81,7 +87,13 @@ class CompanionManager:
                 except Exception:
                     metrics.increment("companion_outbox_state_refresh_failed_total")
             session.state = self.reducer.decay(session.state)
-            events = self.extractor.extract_pre_turn(user_message)
+            signal = parse_user_turn_signal(
+                user_message,
+                turn_id=turn_id,
+                source="voice",
+            )
+            events = self.extractor.extract_pre_turn(signal)
+            signal = enrich_text_affect(signal, events)
             allowed = session.overlay.get("allowed_stages") or session.persona_spec.relationship_policy.get("allowed_stages")
             preview_state = self.reducer.preview(session.state, events, allowed)
             if track_turn:
@@ -90,11 +102,12 @@ class CompanionManager:
                 session.pending_pre_turn_events[turn_id or "__latest__"] = events
             context = await self.context_builder.build(
                 session,
-                user_message,
+                signal.text,
                 state=preview_state,
                 events=events,
                 turn_id=turn_id,
                 track_turn=track_turn,
+                user_turn_signal=signal,
             )
             if track_turn:
                 session.pending_turn_diagnostics[turn_id or "__latest__"] = {
@@ -106,6 +119,7 @@ class CompanionManager:
                     "responsePlan": context.metadata.get("response_plan", {}),
                     "recalledMemoryIds": context.metadata.get("recalled_memory_ids", []),
                     "selectedExampleIds": context.metadata.get("selected_example_ids", []),
+                    "userTurnSignal": signal.to_diagnostic_dict(),
                     "contextBuildMs": round((perf_counter() - started) * 1000, 3),
                 }
             return context

@@ -70,6 +70,34 @@ class ProactivePlaybackTest(unittest.TestCase):
         self.assertEqual("今天过得怎么样？", conn.tts.tts_text_queue.items[1].content_detail)
         self.assertTrue(conn.client_is_speaking)
 
+    def test_expression_plan_is_bound_to_every_proactive_queue_message(self):
+        events = []
+        conn = _connection(events)
+        expression_plan = {
+            "turn_id": "proactive-turn",
+            "primary_style": "intimate",
+            "provider_hint": {"style": "warm"},
+            "dynamic_emotion_enabled": True,
+        }
+
+        async def send_state(_conn, state, text=None):
+            events.append(("state", state))
+
+        result = asyncio.run(
+            enqueue_online_proactive_playback(
+                conn,
+                "我来看看你。",
+                100.0,
+                send_state=send_state,
+                expression_plan=expression_plan,
+            )
+        )
+
+        self.assertTrue(result.sent)
+        for item in conn.tts.tts_text_queue.items:
+            self.assertEqual("proactive-turn", item.turn_id)
+            self.assertEqual("intimate", item.expression_plan["primary_style"])
+
     def test_user_activity_after_start_stops_without_queueing_audio(self):
         events = []
         conn = _connection(events)

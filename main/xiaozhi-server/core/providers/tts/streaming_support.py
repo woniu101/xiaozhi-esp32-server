@@ -230,6 +230,11 @@ class SingleStreamTTSMixin:
 
                 if message.sentence_type == SentenceType.FIRST:
                     self.current_sentence_id = message.sentence_id
+                    self.apply_expression_plan(
+                        message.expression_plan,
+                        sentence_id=message.sentence_id,
+                        turn_id=message.turn_id,
+                    )
                     self.reset_synthesis_cancel()
                     self.tts_stop_request = False
                     self.processed_chars = 0
