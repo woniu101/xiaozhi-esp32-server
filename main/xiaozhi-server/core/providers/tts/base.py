@@ -675,10 +675,30 @@ class TTSProviderBase(ABC):
             os.remove(tts_file)
 
     def _process_before_stop_play_files(self):
+        previous_text = object()
         for audio_datas, text in self.before_stop_play_files:
-            self.tts_audio_queue.put((SentenceType.MIDDLE, audio_datas, text, getattr(self, 'current_sentence_id', None)))
+            # A decoded file produces many audio packets. Attach its display text
+            # only to the first packet; otherwise the client receives the same
+            # subtitle event dozens of times.
+            packet_text = text if text != previous_text else None
+            self.tts_audio_queue.put(
+                (
+                    SentenceType.MIDDLE,
+                    audio_datas,
+                    packet_text,
+                    getattr(self, "current_sentence_id", None),
+                )
+            )
+            previous_text = text
         self.before_stop_play_files.clear()
-        self.tts_audio_queue.put((SentenceType.LAST, [], None, getattr(self, 'current_sentence_id', None)))
+        self.tts_audio_queue.put(
+            (
+                SentenceType.LAST,
+                [],
+                None,
+                getattr(self, "current_sentence_id", None),
+            )
+        )
 
     def _process_remaining_text_stream(
         self, opus_handler: Callable[[bytes], None] = None

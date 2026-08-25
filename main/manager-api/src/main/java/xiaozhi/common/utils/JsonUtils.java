@@ -7,6 +7,8 @@ import java.util.Map;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
@@ -17,7 +19,9 @@ import cn.hutool.core.util.StrUtil;
  * Website: https://www.renren.io
  */
 public class JsonUtils {
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     private static final TypeReference<Map<String, Object>> STRING_OBJECT_MAP = new TypeReference<>() {
     };
     private static final TypeReference<List<Map<String, Object>>> STRING_OBJECT_MAP_LIST = new TypeReference<>() {

@@ -69,3 +69,6 @@ companion:
   # 本地源码开发默认连接同机 xiaozhi-server；Docker Compose 必须通过环境变量覆盖为服务名。
   compiler-url: ${COMPANION_COMPILER_URL:http://127.0.0.1:8003}
   artifact-dir: ${COMPANION_ARTIFACT_DIR:/uploadfile/personas}
+  # Destructive Persona reset is disabled outside explicitly opted-in development environments.
+  # 可选。公开仓库在 GitHub REST API 限流时会自动使用 Git smart-HTTP 降级解析。
+  github-token: ${PERSONA_GITHUB_TOKEN:}

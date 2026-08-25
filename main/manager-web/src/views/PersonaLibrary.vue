@@ -48,8 +48,8 @@
                     <div class="avatar">
                       {{ displayInitial(item.displayName || item.personaId) }}
                     </div>
-                    <el-tag class="state-tag" size="mini" effect="dark" :type="item.publishedVersion ? 'success' : 'info'">
-                      {{ item.publishedVersion ? $t('persona.published') : $t('persona.draft') }}
+                    <el-tag class="state-tag" size="mini" effect="dark" :type="item.pendingVersion ? 'warning' : (item.publishedVersion ? 'success' : 'info')">
+                      {{ item.pendingVersion ? $t('persona.updatePending') : (item.publishedVersion ? $t('persona.enabled') : $t('persona.notEnabled')) }}
                     </el-tag>
                   </div>
                   <div class="card-content">
@@ -64,7 +64,10 @@
                     </div>
                   </div>
                   <div class="card-actions">
-                    <el-button size="small" icon="el-icon-files" @click="showDetail(item)">{{ $t('persona.manageVersions') }}</el-button>
+                    <el-button size="small" icon="el-icon-setting" @click="showDetail(item)">{{ $t('persona.managePersona') }}</el-button>
+                    <el-button v-if="item.owned" size="small" icon="el-icon-upload2" @click="openUpgradeDialog(item)">
+                      {{ $t('persona.importNewVersion') }}
+                    </el-button>
                     <el-button v-if="item.publishedVersion" size="small" type="primary" icon="el-icon-link" @click="bindPersona(item)">
                       {{ $t('persona.bindAgent') }}
                     </el-button>
@@ -162,9 +165,18 @@
           <el-collapse-item :title="$t('persona.testReport')"><pre>{{ pretty(currentJob.compileResult.testReport) }}</pre></el-collapse-item>
           <el-collapse-item :title="$t('persona.judgeReport')"><pre>{{ pretty(currentJob.compileResult.judgeReport) }}</pre></el-collapse-item>
         </el-collapse>
-        <div class="preview-actions" v-if="currentJob.status === 'ready'">
-          <el-select v-model="publishVisibility"><el-option value="private" :label="$t('persona.private')" /><el-option value="shared" :label="$t('persona.shared')" /></el-select>
-          <el-button type="success" :loading="publishing" @click="publishCompiled">{{ $t('persona.publish') }}</el-button>
+        <el-alert v-if="currentJob.compileResult.recompileUnchanged" type="success" :closable="false" show-icon
+          :title="$t('persona.recompileUnchanged')" class="recompile-result" />
+        <el-alert v-else-if="currentJob.compileResult.recompiled" type="success" :closable="false" show-icon
+          :title="$t('persona.recompileCreated', {
+            version: compiledVersion,
+            count: currentJob.compileResult.inheritedSignatureAudioCount || 0
+          })" class="recompile-result" />
+        <div class="preview-actions" v-if="currentJob.status === 'ready' && !currentJob.compileResult.recompileUnchanged">
+          <el-button v-if="currentJob.compileResult.recompiled" icon="el-icon-document-copy" @click="showRecompileDiff">
+            {{ $t('persona.reviewRevisionDiff') }}
+          </el-button>
+          <el-button type="success" :loading="publishing" @click="applyCompiled">{{ $t('persona.applyUpdate') }}</el-button>
         </div>
       </div>
       <span v-if="cancelableJob" slot="footer">
@@ -176,47 +188,208 @@
       <el-descriptions :column="2" border>
         <el-descriptions-item :label="$t('persona.personaId')">{{ detail.personaId }}</el-descriptions-item>
         <el-descriptions-item :label="$t('persona.ceiling')">{{ detail.relationshipCeiling }}</el-descriptions-item>
-        <el-descriptions-item :label="$t('persona.publishedVersion')">{{ detail.publishedVersion || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('persona.currentVersion')">{{ detail.publishedVersion || $t('persona.notEnabled') }}</el-descriptions-item>
       </el-descriptions>
-      <div class="section-head"><h3>{{ $t('persona.versions') }}</h3>
-        <div class="diff-controls">
-          <el-select v-model="diffFrom" size="mini" :placeholder="$t('persona.fromVersion')"><el-option v-for="item in versions" :key="`from-${item.version}`" :value="item.version" :label="item.version" /></el-select>
-          <span>→</span>
-          <el-select v-model="diffTo" size="mini" :placeholder="$t('persona.toVersion')"><el-option v-for="item in versions" :key="`to-${item.version}`" :value="item.version" :label="item.version" /></el-select>
-          <el-button size="mini" :disabled="!diffFrom || !diffTo || diffFrom === diffTo" @click="showDiff">{{ $t('persona.compare') }}</el-button>
+      <div v-if="detail.owned" class="version-management-bar">
+        <div>
+          <strong>{{ $t('persona.upgradeTitle') }}</strong>
+          <span>{{ $t('persona.upgradeBehaviorHint') }}</span>
         </div>
+        <el-button size="small" type="primary" plain icon="el-icon-upload2" @click="openUpgradeDialog(detail)">
+          {{ $t('persona.importNewVersion') }}
+        </el-button>
+      </div>
+      <div class="section-head"><h3>{{ $t('persona.lifecycleTitle') }}</h3>
+        <el-button v-if="currentLifecycle && candidateLifecycle" size="mini" icon="el-icon-document-copy"
+          @click="comparePendingUpdate">{{ $t('persona.comparePending') }}</el-button>
       </div>
       <el-table :data="versions" v-loading="loadingVersions" class="versions-table">
-        <el-table-column prop="version" :label="$t('persona.version')" min-width="130" />
-        <el-table-column prop="status" :label="$t('persona.status')" width="100" />
-        <el-table-column prop="qualityScore" :label="$t('persona.score')" width="90" />
-        <el-table-column prop="testStatus" :label="$t('persona.test')" width="100" />
-        <el-table-column :label="$t('persona.actions')" width="360">
+        <el-table-column :label="$t('persona.lifecycleRole')" width="105">
+          <template slot-scope="scope"><el-tag size="mini" :type="lifecycleTagType(scope.row.lifecycleRole)">{{ lifecycleLabel(scope.row.lifecycleRole) }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="version" :label="$t('persona.internalVersion')" min-width="125" />
+        <el-table-column prop="qualityScore" :label="$t('persona.score')" width="72" />
+        <el-table-column prop="testStatus" :label="$t('persona.test')" width="82" />
+        <el-table-column :label="$t('persona.actions')" min-width="355">
           <template slot-scope="scope">
-            <el-button type="text" @click="viewVersion(scope.row)">{{ $t('persona.preview') }}</el-button>
-            <el-button v-if="detail.owned" type="text" :loading="scope.row._testing" @click="rerunTest(scope.row)">{{ $t('persona.rerunTest') }}</el-button>
-            <el-button v-if="detail.owned" type="text" @click="openConversationTest(scope.row)">{{ $t('persona.conversationTest') }}</el-button>
-            <el-button v-if="detail.owned && scope.row.status !== 'published' && scope.row.status !== 'archived'" type="text" @click="publishVersion(scope.row)">{{ $t('persona.publish') }}</el-button>
-            <el-button v-if="detail.owned && scope.row.status === 'published' && detail.publishedVersion !== scope.row.version" type="text" @click="rollbackVersion(scope.row)">{{ $t('persona.rollback') }}</el-button>
-            <el-button v-if="detail.owned && detail.publishedVersion !== scope.row.version" type="text" class="danger" @click="archiveVersion(scope.row)">{{ $t('persona.archive') }}</el-button>
+            <div class="version-actions">
+              <el-button type="text" @click="viewVersion(scope.row)">{{ $t('persona.preview') }}</el-button>
+              <el-button v-if="detail.owned" type="text" icon="el-icon-microphone" @click="openSignatureManager(scope.row)">
+                {{ $t('persona.signatureManager') }}
+              </el-button>
+              <el-button v-if="detail.owned && scope.row.lifecycleRole !== 'previous'" type="text"
+                @click="openRecompileDialog(scope.row)">{{ $t('persona.recompile') }}</el-button>
+              <el-button v-if="detail.owned" type="text" :loading="scope.row._testing" @click="rerunTest(scope.row)">{{ $t('persona.rerunTest') }}</el-button>
+              <el-button v-if="detail.owned" type="text" @click="openConversationTest(scope.row)">{{ $t('persona.conversationTest') }}</el-button>
+              <el-button v-if="detail.owned && scope.row.lifecycleRole === 'candidate'" type="text" @click="applyVersion(scope.row)">{{ $t('persona.applyUpdate') }}</el-button>
+              <el-button v-if="detail.owned && scope.row.lifecycleRole === 'previous'" type="text" @click="restorePrevious">{{ $t('persona.restorePrevious') }}</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
-      <el-collapse v-if="detail.owned" class="audit-collapse">
-        <el-collapse-item :title="$t('persona.auditTrail')">
-          <el-table :data="auditItems" size="mini">
-            <el-table-column prop="createdAt" :label="$t('persona.time')" width="170" />
-            <el-table-column prop="action" :label="$t('persona.action')" width="210" />
-            <el-table-column prop="targetId" :label="$t('persona.target')" />
-          </el-table>
-        </el-collapse-item>
-      </el-collapse>
+      <div v-if="detail.owned" class="persona-danger-zone">
+        <div>
+          <strong>{{ $t('persona.deletePersona') }}</strong>
+          <span>{{ $t('persona.deletePersonaHint') }}</span>
+        </div>
+        <el-button type="danger" plain size="small" icon="el-icon-delete" @click="deletePersona(detail)">
+          {{ $t('persona.deletePersona') }}
+        </el-button>
+      </div>
+    </el-dialog>
+
+    <el-dialog :title="$t('persona.upgradeTitle')" :visible.sync="upgradeDialog" width="560px">
+      <el-alert type="info" :closable="false" show-icon
+        :title="$t('persona.upgradeTargetHint', { id: upgradeTarget.personaId || '-' })" />
+      <div class="upgrade-options">
+        <button v-if="upgradeTarget.sourceUrl" class="upgrade-option" type="button" :disabled="creatingJob" @click="startUpgradeFromSource">
+          <i class="el-icon-link"></i>
+          <span><strong>{{ $t('persona.upgradeFromSource') }}</strong><small>{{ upgradeTarget.sourceUrl }}</small></span>
+          <i class="el-icon-arrow-right"></i>
+        </button>
+        <button class="upgrade-option" type="button" :disabled="creatingJob" @click="chooseUpgradeZip">
+          <i class="el-icon-upload2"></i>
+          <span><strong>{{ $t('persona.upgradeFromZip') }}</strong><small>{{ $t('persona.upgradeZipHint') }}</small></span>
+          <i class="el-icon-arrow-right"></i>
+        </button>
+      </div>
+      <input ref="upgradeZipInput" class="hidden-input" type="file" accept=".zip,application/zip" @change="uploadUpgradeZip" />
+    </el-dialog>
+
+    <el-dialog :title="$t('persona.recompileTitle')" :visible.sync="recompileDialog" width="600px">
+      <el-alert type="info" :closable="false" show-icon
+        :title="$t('persona.recompileHint', { version: recompileTarget.version || '-' })" />
+      <el-descriptions :column="1" border size="small" class="recompile-source">
+        <el-descriptions-item :label="$t('persona.version')">{{ recompileTarget.version || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('persona.compilerVersion')">{{ recompileTarget.compilerVersion || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$t('persona.sourceCommit')">{{ recompileTarget.sourceCommit || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <el-checkbox v-model="inheritSignatureAudio" class="recompile-inherit">
+        {{ $t('persona.inheritSignatureAudio') }}
+      </el-checkbox>
+      <p class="recompile-note">{{ $t('persona.inheritSignatureAudioHint') }}</p>
+      <div class="upgrade-options">
+        <button class="upgrade-option" type="button" :disabled="creatingJob" @click="startRecompile">
+          <i class="el-icon-refresh"></i>
+          <span><strong>{{ $t('persona.recompileFromSnapshot') }}</strong><small>{{ $t('persona.recompileFromSnapshotHint') }}</small></span>
+          <i class="el-icon-arrow-right"></i>
+        </button>
+        <button class="upgrade-option" type="button" :disabled="creatingJob" @click="chooseRecompileZip">
+          <i class="el-icon-upload2"></i>
+          <span><strong>{{ $t('persona.recompileFromZip') }}</strong><small>{{ $t('persona.recompileZipHint') }}</small></span>
+          <i class="el-icon-arrow-right"></i>
+        </button>
+      </div>
+      <input ref="recompileZipInput" class="hidden-input" type="file" accept=".zip,application/zip" @change="uploadRecompileZip" />
     </el-dialog>
 
     <el-dialog :title="$t('persona.versionPreview')" :visible.sync="versionDialog" width="800px">
       <el-tabs><el-tab-pane :label="$t('persona.runtimePrompt')"><pre>{{ versionDetail.runtimePrompt }}</pre></el-tab-pane>
         <el-tab-pane :label="$t('persona.canonicalSpec')"><pre>{{ pretty(versionDetail.canonicalSpec) }}</pre></el-tab-pane>
         <el-tab-pane :label="$t('persona.testReport')"><pre>{{ pretty(versionDetail.testReport) }}</pre></el-tab-pane></el-tabs>
+    </el-dialog>
+    <el-dialog :title="$t('persona.signatureManager')" :visible.sync="signatureDialog" width="920px" append-to-body>
+      <div class="signature-toolbar">
+        <div>
+          <strong>{{ detail.displayName || detail.personaId }} · {{ signatureVersion }}</strong>
+          <span>{{ $t('persona.signatureManagerHint') }}</span>
+        </div>
+        <el-button type="primary" size="small" icon="el-icon-plus" @click="editSignature()">
+          {{ $t('persona.addSignature') }}
+        </el-button>
+      </div>
+      <div v-loading="loadingSignatures" class="signature-list">
+        <el-empty v-if="!loadingSignatures && !signatures.length" :description="$t('persona.emptySignatures')" />
+        <article v-for="item in signatures" :key="item.id" class="signature-card"
+          :class="{ 'is-disabled': item.enabled === false }">
+          <div class="signature-copy">
+            <div class="signature-title">
+              <strong>{{ item.display_text }}</strong>
+              <el-tag size="mini" :type="item.origin === 'skill' ? 'info' : 'success'">
+                {{ item.origin === 'skill' ? 'Skill' : $t('persona.customSignature') }}
+              </el-tag>
+              <el-tag size="mini" :type="item.enabled === false ? 'danger' : 'success'">
+                {{ item.enabled === false ? $t('persona.signatureDisabled') : $t('persona.signatureEnabled') }}
+              </el-tag>
+              <code>{{ item.id }}</code>
+            </div>
+            <p>{{ item.semantic_rule }}</p>
+            <small v-if="item.explicit_aliases && item.explicit_aliases.length">
+              {{ $t('persona.signatureAliases') }}：{{ item.explicit_aliases.join('、') }}
+            </small>
+          </div>
+          <div class="signature-variants">
+            <div v-for="variant in signatureVariants" :key="`${item.id}-${variant}`" class="signature-variant">
+              <span>{{ signatureVariantLabel(variant) }}</span>
+              <template v-if="assetFor(item, variant)">
+                <el-button type="text" icon="el-icon-video-play" @click="previewSignatureAsset(assetFor(item, variant))">
+                  {{ $t('persona.listen') }}
+                </el-button>
+                <el-button type="text" :disabled="item.enabled === false" @click="chooseSignatureAsset(item, variant)">{{ $t('persona.replaceAudio') }}</el-button>
+                <el-button type="text" class="danger" @click="removeSignatureAsset(assetFor(item, variant))">
+                  {{ $t('persona.deleteAudio') }}
+                </el-button>
+              </template>
+              <el-button v-else type="text" icon="el-icon-upload2" :disabled="item.enabled === false" @click="chooseSignatureAsset(item, variant)">
+                {{ $t('persona.uploadAudio') }}
+              </el-button>
+            </div>
+          </div>
+          <div class="signature-actions">
+            <el-button size="mini" plain :type="item.enabled === false ? 'success' : 'warning'"
+              :loading="item._toggling" @click="toggleSignature(item)">
+              {{ item.enabled === false ? $t('persona.enableSignature') : $t('persona.disableSignature') }}
+            </el-button>
+            <el-button size="mini" plain @click="editSignature(item)">{{ $t('persona.editRule') }}</el-button>
+          </div>
+        </article>
+      </div>
+      <input ref="signatureAudioInput" class="hidden-input" type="file" accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg" @change="uploadSignatureAudio" />
+    </el-dialog>
+    <el-dialog :title="$t('persona.editSignature')" :visible.sync="signatureEditorDialog" width="700px"
+      top="4vh" custom-class="signature-editor-dialog" append-to-body>
+      <el-alert v-if="signatureRuleReadOnly" type="info" :closable="false" show-icon
+        :title="$t('persona.skillSignatureReadOnly')" class="signature-editor-alert" />
+      <el-alert v-else-if="signatureForm.origin === 'skill' && signatureForm.customizing" type="warning" :closable="false" show-icon
+        :title="$t('persona.skillSignatureOverrideHint')" class="signature-editor-alert" />
+      <el-form class="signature-editor-form" label-position="top" size="small">
+        <el-form-item :label="$t('persona.signatureId')">
+          <el-input v-model.trim="signatureForm.id" :disabled="signatureForm.editing" placeholder="ciallo" />
+        </el-form-item>
+        <el-form-item :label="$t('persona.signatureText')">
+          <el-input v-model.trim="signatureForm.displayText" :disabled="signatureRuleReadOnly" placeholder="Ciallo～(∠・ω< )⌒★" />
+        </el-form-item>
+        <el-form-item :label="$t('persona.signatureAliases')">
+          <el-input v-model.trim="signatureForm.aliasesText" :disabled="signatureRuleReadOnly" :placeholder="$t('persona.signatureAliasesHint')" />
+        </el-form-item>
+        <el-form-item :label="$t('persona.signatureRule')">
+          <el-input v-model.trim="signatureForm.semanticRule" :disabled="signatureRuleReadOnly" type="textarea" :rows="4" :placeholder="$t('persona.signatureRuleHint')" />
+        </el-form-item>
+        <el-form-item :label="$t('persona.signatureExamples')">
+          <el-input v-model="signatureForm.examplesText" :disabled="signatureRuleReadOnly" type="textarea" :rows="2" :placeholder="$t('persona.signatureExamplesHint')" />
+        </el-form-item>
+      </el-form>
+      <section class="signature-editor-assets">
+        <div class="signature-editor-assets-head">
+          <div><strong>{{ $t('persona.signatureRecordings') }}</strong><span>{{ $t('persona.signatureAudioAnchorHint') }}</span></div>
+          <el-tag v-if="!signatureForm.editing" size="mini" type="info">{{ $t('persona.saveBeforeUpload') }}</el-tag>
+        </div>
+        <div v-for="variant in signatureVariants" :key="`editor-${variant}`" class="signature-variant">
+          <span>{{ signatureVariantLabel(variant) }}</span>
+          <template v-if="assetFor(signatureEditorItem, variant)">
+            <el-button type="text" icon="el-icon-video-play" @click="previewSignatureAsset(assetFor(signatureEditorItem, variant))">{{ $t('persona.listen') }}</el-button>
+            <el-button type="text" @click="chooseSignatureAsset(signatureEditorItem, variant)">{{ $t('persona.replaceAudio') }}</el-button>
+            <el-button type="text" class="danger" @click="removeSignatureAsset(assetFor(signatureEditorItem, variant))">{{ $t('persona.deleteAudio') }}</el-button>
+          </template>
+          <el-button v-else type="text" icon="el-icon-upload2" :disabled="!signatureForm.editing"
+            @click="chooseSignatureAsset(signatureEditorItem, variant)">{{ $t('persona.uploadAudio') }}</el-button>
+        </div>
+      </section>
+      <span slot="footer">
+        <el-button @click="signatureEditorDialog = false">{{ $t('button.close') }}</el-button>
+        <el-button v-if="signatureRuleReadOnly" type="primary" plain @click="signatureForm.customizing = true">{{ $t('persona.customizeSignatureRule') }}</el-button>
+        <el-button v-else type="primary" :loading="savingSignature" @click="saveSignature">{{ $t('button.save') }}</el-button>
+      </span>
     </el-dialog>
     <el-dialog :title="$t('persona.versionDiff')" :visible.sync="diffDialog" width="800px">
       <el-table :data="diffResult.changes || []">
@@ -267,14 +440,23 @@ export default {
       compilerState: 'checking', compilerMessage: '',
       urlDialog: false, creatingJob: false, urlForm: { url: '', ref: '' },
       progressDialog: false, currentJob: {}, pollTimer: null,
-      publishing: false, publishVisibility: 'private',
+      publishing: false,
       detailDialog: false, detail: {}, versions: [], loadingVersions: false,
       versionDialog: false, versionDetail: {},
       agentDialog: false, agents: [], selectedAgentId: '', bindingPersonaId: '',
-      diffFrom: '', diffTo: '', diffDialog: false, diffResult: {},
+      diffDialog: false, diffResult: {},
       conversationTestDialog: false, conversationTestRow: null,
       conversationSamplesJson: '', conversationTestRunning: false, conversationTestReport: null,
-      auditItems: []
+      upgradeDialog: false, upgradeTarget: {},
+      recompileDialog: false, recompileTarget: {}, inheritSignatureAudio: true,
+      signatureDialog: false, signatureEditorDialog: false, signatureVersion: '',
+      signatures: [], loadingSignatures: false, savingSignature: false,
+      signatureVariants: ['classic', 'playful', 'soft'], signatureUploadTarget: null,
+      signatureForm: {
+        id: '', displayText: '', aliasesText: '', semanticRule: '', examplesText: '',
+        editing: false, origin: 'custom', customizing: true, item: null
+      },
+      signatureAudio: null, signatureAudioUrl: ''
     }
   },
   computed: {
@@ -282,6 +464,12 @@ export default {
       const query = this.localKeyword.toLowerCase()
       if (!query) return this.personas
       return this.personas.filter(item => `${item.displayName} ${item.personaId} ${item.description}`.toLowerCase().includes(query))
+    },
+    currentLifecycle() {
+      return this.versions.find(item => item.lifecycleRole === 'current') || null
+    },
+    candidateLifecycle() {
+      return this.versions.find(item => item.lifecycleRole === 'candidate') || null
     },
     jobStep() {
       const status = this.currentJob.status
@@ -308,6 +496,17 @@ export default {
       if (['failed', 'validation_failed'].includes(this.currentJob.status)) return 'el-icon-circle-close'
       if (this.currentJob.status === 'cancelled') return 'el-icon-warning-outline'
       return 'el-icon-loading'
+    },
+    signatureRuleReadOnly() {
+      return this.signatureForm.editing
+        && this.signatureForm.origin === 'skill'
+        && !this.signatureForm.customizing
+    },
+    signatureEditorItem() {
+      return this.signatureForm.item || {
+        id: this.signatureForm.id,
+        asset_metadata: []
+      }
     }
   },
   mounted() {
@@ -316,7 +515,7 @@ export default {
     const activeJobId = window.localStorage.getItem('personaImportJobId')
     if (activeJobId) this.resumeJob(activeJobId)
   },
-  beforeDestroy() { this.stopPolling() },
+  beforeDestroy() { this.stopPolling(); this.stopSignatureAudio() },
   methods: {
     ok(response) { return response?.data?.code === 0 ? response.data.data : null },
     loadActiveTab() { if (this.activeTab === 'gallery') this.loadGallery(); else this.loadPersonas() },
@@ -391,6 +590,8 @@ export default {
           this.pollTimer = window.setTimeout(this.pollJob, 1500)
         } else if (job) {
           window.localStorage.removeItem('personaImportJobId')
+          this.loadPersonas()
+          if (this.detailDialog && this.detail.personaId === job.expectedPersonaId) this.showDetail(this.detail)
         }
       }, () => { this.pollTimer = window.setTimeout(this.pollJob, 3000) })
     },
@@ -403,10 +604,10 @@ export default {
         this.$message.success(this.$t('persona.importCancelled'))
       })
     },
-    publishCompiled() {
+    applyCompiled() {
       const result = this.currentJob.compileResult
       this.publishing = true
-      Api.persona.publish(result.personaId, this.compiledVersion, this.publishVisibility, () => {
+      Api.persona.applyUpdate(result.personaId, this.compiledVersion, () => {
         this.publishing = false; window.localStorage.removeItem('personaImportJobId'); this.$message.success(this.$t('persona.publishSuccess')); this.progressDialog = false; this.loadPersonas()
       }, () => { this.publishing = false })
     },
@@ -414,13 +615,147 @@ export default {
       this.detail = item; this.detailDialog = true; this.loadingVersions = true
       Api.persona.detail(item.personaId, (response) => {
         this.detail = this.ok(response) || item
-        if (this.detail.owned) Api.persona.audit(item.personaId, (auditResponse) => { this.auditItems = this.ok(auditResponse) || [] })
-        else this.auditItems = []
       }, () => {})
-      Api.persona.versions(item.personaId, (response) => { this.versions = this.ok(response) || []; this.diffTo = this.versions[0]?.version || ''; this.diffFrom = this.versions[1]?.version || ''; this.loadingVersions = false }, () => { this.loadingVersions = false })
+      Api.persona.versions(item.personaId, (response) => { this.versions = this.ok(response) || []; this.loadingVersions = false }, () => { this.loadingVersions = false })
     },
     viewVersion(row) { Api.persona.version(this.detail.personaId, row.version, (response) => { this.versionDetail = this.ok(response) || {}; this.versionDialog = true }) },
-    showDiff() { Api.persona.diff(this.detail.personaId, this.diffFrom, this.diffTo, (response) => { this.diffResult = this.ok(response) || {}; this.diffDialog = true }) },
+    openSignatureManager(row) {
+      this.signatureVersion = row.version
+      this.signatureDialog = true
+      this.loadSignatures()
+    },
+    loadSignatures() {
+      if (!this.detail.personaId || !this.signatureVersion) return
+      this.loadingSignatures = true
+      Api.persona.signatures(this.detail.personaId, this.signatureVersion, (response) => {
+        this.signatures = this.ok(response) || []
+        if (this.signatureForm.editing) {
+          const current = this.signatures.find(item => item.id === this.signatureForm.id)
+          if (current) this.signatureForm.item = current
+        }
+        this.loadingSignatures = false
+      }, () => { this.loadingSignatures = false })
+    },
+    editSignature(item) {
+      this.signatureForm = item ? {
+        id: item.id,
+        displayText: item.display_text || '',
+        aliasesText: (item.explicit_aliases || []).join('、'),
+        semanticRule: item.semantic_rule || '',
+        examplesText: (item.positive_examples || []).join('\n'),
+        editing: true,
+        origin: item.origin || 'custom',
+        customizing: item.origin !== 'skill',
+        item
+      } : {
+        id: '', displayText: '', aliasesText: '', semanticRule: '', examplesText: '',
+        editing: false, origin: 'custom', customizing: true, item: null
+      }
+      this.signatureEditorDialog = true
+    },
+    saveSignature() {
+      const form = this.signatureForm
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(form.id)) return this.$message.error(this.$t('persona.signatureIdInvalid'))
+      if (!form.displayText || !form.semanticRule) return this.$message.error(this.$t('persona.signatureRequired'))
+      const splitValues = value => String(value || '').split(/[、,，\n]/).map(item => item.trim()).filter(Boolean)
+      this.savingSignature = true
+      Api.persona.saveSignature(this.detail.personaId, this.signatureVersion, form.id, {
+        displayText: form.displayText,
+        semanticRule: form.semanticRule,
+        explicitAliases: splitValues(form.aliasesText),
+        positiveExamples: splitValues(form.examplesText),
+        ambiguityPolicy: '上下文不能唯一确定时不触发',
+        fallback: 'tts',
+        styleMap: { neutral: 'classic', restrained: 'classic', happy: 'playful', excited: 'playful', warm: 'soft', soft: 'soft' }
+      }, (response) => {
+        this.savingSignature = false
+        const saved = this.ok(response)
+        if (saved) {
+          this.signatureForm.editing = true
+          this.signatureForm.origin = saved.origin || 'custom'
+          this.signatureForm.customizing = true
+          this.signatureForm.item = saved
+        }
+        this.$message.success(this.$t('persona.signatureSaved'))
+        this.loadSignatures()
+      }, () => { this.savingSignature = false })
+    },
+    toggleSignature(item) {
+      this.$set(item, '_toggling', true)
+      Api.persona.setSignatureEnabled(
+        this.detail.personaId,
+        this.signatureVersion,
+        item.id,
+        item.enabled === false,
+        () => {
+          this.$set(item, '_toggling', false)
+          this.$message.success(this.$t('persona.signatureToggleSuccess'))
+          this.loadSignatures()
+        },
+        () => { this.$set(item, '_toggling', false) }
+      )
+    },
+    assetFor(item, variant) {
+      return (item.asset_metadata || []).find(asset => asset.variant === variant) || null
+    },
+    signatureVariantLabel(variant) {
+      return this.$t(`persona.signatureVariant_${variant}`)
+    },
+    chooseSignatureAsset(item, variant) {
+      this.signatureUploadTarget = { signatureKey: item.id, variant }
+      const input = this.$refs.signatureAudioInput
+      if (input) { input.value = ''; input.click() }
+    },
+    uploadSignatureAudio(event) {
+      const file = event.target.files?.[0]
+      const target = this.signatureUploadTarget
+      event.target.value = ''
+      if (!file || !target) return
+      if (!/\.(wav|mp3|ogg)$/i.test(file.name) || file.size > 5 * 1024 * 1024) {
+        return this.$message.error(this.$t('persona.signatureAudioInvalid'))
+      }
+      Api.persona.uploadSignatureAsset(this.detail.personaId, this.signatureVersion, target.signatureKey, target.variant, file, (response) => {
+        const saved = this.ok(response)
+        if (saved && this.signatureForm.id === saved.id) this.signatureForm.item = saved
+        this.$message.success(this.$t('persona.signatureAudioSaved'))
+        this.loadSignatures()
+      })
+    },
+    previewSignatureAsset(asset) {
+      this.stopSignatureAudio()
+      Api.persona.previewSignatureAsset(asset.assetId, (response) => {
+        const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: asset.contentType || 'audio/wav' })
+        this.signatureAudioUrl = URL.createObjectURL(blob)
+        this.signatureAudio = new Audio(this.signatureAudioUrl)
+        this.signatureAudio.onended = () => this.stopSignatureAudio()
+        this.signatureAudio.onerror = () => { this.stopSignatureAudio(); this.$message.error(this.$t('persona.signaturePreviewFailed')) }
+        this.signatureAudio.play().catch(() => { this.stopSignatureAudio(); this.$message.error(this.$t('persona.signaturePreviewFailed')) })
+      })
+    },
+    stopSignatureAudio() {
+      if (this.signatureAudio) { this.signatureAudio.pause(); this.signatureAudio = null }
+      if (this.signatureAudioUrl) { URL.revokeObjectURL(this.signatureAudioUrl); this.signatureAudioUrl = '' }
+    },
+    removeSignatureAsset(asset) {
+      this.$confirm(this.$t('persona.deleteSignatureAudioConfirm'), this.$t('message.info'), { type: 'warning' })
+        .then(() => Api.persona.deleteSignatureAsset(asset.assetId, () => { this.stopSignatureAudio(); this.loadSignatures() }))
+        .catch(() => {})
+    },
+    comparePendingUpdate() {
+      if (!this.currentLifecycle || !this.candidateLifecycle) return
+      Api.persona.diff(this.detail.personaId, this.currentLifecycle.version, this.candidateLifecycle.version, (response) => {
+        this.diffResult = this.ok(response) || {}
+        this.diffDialog = true
+      })
+    },
+    showRecompileDiff() {
+      const result = this.currentJob.compileResult || {}
+      if (!result.personaId || !result.previousVersion || !this.compiledVersion) return
+      Api.persona.diff(result.personaId, result.previousVersion, this.compiledVersion, (response) => {
+        this.diffResult = this.ok(response) || {}
+        this.diffDialog = true
+      })
+    },
     rerunTest(row) {
       this.$set(row, '_testing', true)
       Api.persona.rerunTest(this.detail.personaId, row.version, [], (response) => {
@@ -454,9 +789,115 @@ export default {
         this.showDetail(this.detail)
       }, () => { this.conversationTestRunning = false })
     },
-    publishVersion(row) { Api.persona.publish(this.detail.personaId, row.version, this.detail.visibility || 'private', () => { this.$message.success(this.$t('persona.publishSuccess')); this.showDetail(this.detail); this.loadPersonas() }) },
-    rollbackVersion(row) { Api.persona.rollback(this.detail.personaId, row.version, () => { this.$message.success(this.$t('persona.rollbackSuccess')); this.showDetail(this.detail); this.loadPersonas() }) },
-    archiveVersion(row) { this.$confirm(this.$t('persona.archiveConfirm'), this.$t('message.info'), { type: 'warning' }).then(() => Api.persona.archive(this.detail.personaId, row.version, () => { this.$message.success(this.$t('persona.archiveSuccess')); this.showDetail(this.detail) })).catch(() => {}) },
+    applyVersion(row) {
+      Api.persona.applyUpdate(this.detail.personaId, row.version, () => {
+        this.$message.success(this.$t('persona.publishSuccess'))
+        this.showDetail(this.detail)
+        this.loadPersonas()
+      })
+    },
+    restorePrevious() {
+      this.$confirm(this.$t('persona.restorePreviousConfirm'), this.$t('message.info'), { type: 'warning' })
+        .then(() => Api.persona.restorePrevious(this.detail.personaId, () => {
+          this.$message.success(this.$t('persona.rollbackSuccess'))
+          this.showDetail(this.detail)
+          this.loadPersonas()
+        }))
+        .catch(() => {})
+    },
+    openUpgradeDialog(item) {
+      this.upgradeTarget = { ...item }
+      this.upgradeDialog = true
+    },
+    openRecompileDialog(row) {
+      this.recompileTarget = { ...row }
+      this.inheritSignatureAudio = true
+      this.recompileDialog = true
+    },
+    startRecompile() {
+      const target = this.recompileTarget
+      if (!this.detail.personaId || !target.version) return
+      this.creatingJob = true
+      Api.persona.recompile(this.detail.personaId, target.version, this.inheritSignatureAudio, (response) => {
+        this.creatingJob = false
+        this.recompileDialog = false
+        this.watchJob(this.ok(response))
+      }, () => { this.creatingJob = false })
+    },
+    chooseRecompileZip() {
+      this.$refs.recompileZipInput?.click()
+    },
+    uploadRecompileZip(event) {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+      if (!file.name.toLowerCase().endsWith('.zip') || file.size > 10 * 1024 * 1024) {
+        return this.$message.error(this.$t('persona.zipInvalid'))
+      }
+      const target = this.recompileTarget
+      this.creatingJob = true
+      Api.persona.recompileUpload(this.detail.personaId, target.version, this.inheritSignatureAudio, file, (response) => {
+        this.creatingJob = false
+        this.recompileDialog = false
+        this.watchJob(this.ok(response))
+      }, () => { this.creatingJob = false })
+    },
+    startUpgradeFromSource() {
+      const personaId = this.upgradeTarget.personaId
+      if (!personaId) return
+      this.creatingJob = true
+      Api.persona.upgradeFromSource(personaId, (response) => {
+        this.creatingJob = false
+        this.upgradeDialog = false
+        this.watchJob(this.ok(response))
+      }, () => { this.creatingJob = false })
+    },
+    chooseUpgradeZip() {
+      this.$refs.upgradeZipInput?.click()
+    },
+    uploadUpgradeZip(event) {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+      if (!file.name.toLowerCase().endsWith('.zip') || file.size > 10 * 1024 * 1024) {
+        return this.$message.error(this.$t('persona.zipInvalid'))
+      }
+      const personaId = this.upgradeTarget.personaId
+      this.creatingJob = true
+      Api.persona.upgradeUpload(personaId, file, (response) => {
+        this.creatingJob = false
+        this.upgradeDialog = false
+        this.watchJob(this.ok(response))
+      }, () => { this.creatingJob = false })
+    },
+    deletePersona(item) {
+      Api.persona.usage(item.personaId, (response) => {
+        const usage = this.ok(response) || {}
+        return this.$prompt(
+          this.$t('persona.deleteConfirm', {
+            name: item.displayName || item.personaId,
+            id: item.personaId,
+            count: usage.bindingCount || 0
+          }),
+          this.$t('persona.deletePersona'),
+          {
+            type: 'warning',
+            confirmButtonText: this.$t('persona.confirmDelete'),
+            cancelButtonText: this.$t('button.cancel'),
+            inputPlaceholder: item.personaId,
+            inputValidator: value => value === item.personaId || this.$t('persona.deleteIdMismatch')
+          }
+        ).then(() => {
+          Api.persona.remove(item.personaId, item.personaId, () => {
+            this.detailDialog = false
+            this.$message.success(this.$t('persona.deleteSuccess'))
+            this.loadPersonas()
+          })
+        }).catch(() => {})
+      })
+    },
+    lifecycleLabel(role) { return this.$t(`persona.lifecycle_${role || 'candidate'}`) },
+    lifecycleTagType(role) { return ({ current: 'success', candidate: 'warning', previous: 'info' })[role] || 'info' },
     bindPersona(item) {
       this.bindingPersonaId = item.personaId; this.selectedAgentId = ''; this.agentDialog = true
       Api.agent.getAgentList(({ data }) => { this.agents = data?.code === 0 && Array.isArray(data.data) ? data.data : [] })
@@ -821,15 +1262,159 @@ pre {
 }
 .preview-actions { justify-content: flex-end; margin-top: 16px; }
 .versions-table { margin-top: 18px; }
+.version-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 13px;
+  row-gap: 2px;
+}
+.version-actions .el-button { margin-left: 0; padding: 7px 0; }
 .danger { color: #f56c6c; }
 .section-head { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; gap: 14px; }
 .section-head h3 { margin: 0; color: #33415c; }
+.version-management-bar,
+.persona-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid #e3eaf6;
+  border-radius: 12px;
+  background: #f8faff;
+}
+.version-management-bar > div,
+.persona-danger-zone > div { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.version-management-bar strong,
+.persona-danger-zone strong { color: #33415c; font-size: 14px; }
+.version-management-bar span,
+.persona-danger-zone span { color: #7b88a2; font-size: 12px; line-height: 1.5; }
+.persona-danger-zone { margin-top: 20px; border-color: #f1d8da; background: #fffafa; }
+.persona-danger-zone strong { color: #b94e57; }
+.upgrade-options { display: grid; gap: 12px; margin-top: 18px; }
+.upgrade-option {
+  width: 100%;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid #e0e7f3;
+  border-radius: 12px;
+  color: #49617f;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: .2s ease;
+}
+.upgrade-option:hover { border-color: #8eb2fa; color: #3978ec; background: #f7faff; transform: translateY(-1px); }
+.upgrade-option:disabled { opacity: .6; cursor: wait; transform: none; }
+.upgrade-option > i:first-child { font-size: 23px; text-align: center; }
+.upgrade-option span { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.upgrade-option strong { color: #2d405f; font-size: 14px; }
+.upgrade-option small { overflow: hidden; color: #8794aa; text-overflow: ellipsis; white-space: nowrap; }
 .diff-controls { display: flex; align-items: center; gap: 6px; }
 .diff-controls .el-select { width: 130px; }
 .diff-value { max-height: 180px; font-size: 11px; }
 .audit-collapse { margin-top: 20px; }
 .conversation-samples { margin-top: 16px; }
 .conversation-report { margin-top: 16px; max-height: 260px; }
+.recompile-result { margin-top: 14px; }
+.recompile-source { margin: 16px 0 14px; }
+.recompile-inherit { color: #344967; font-weight: 600; }
+.recompile-note { margin: 7px 0 16px 24px; color: #7c8aa2; font-size: 12px; line-height: 1.55; }
+.signature-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e3eaf6;
+  border-radius: 12px;
+  background: #f8faff;
+}
+.signature-toolbar > div { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.signature-toolbar strong { color: #2f4263; }
+.signature-toolbar span { color: #7887a2; font-size: 12px; line-height: 1.5; }
+.signature-list { min-height: 180px; display: grid; gap: 12px; }
+.signature-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(290px, .85fr) 88px;
+  align-items: start;
+  column-gap: 24px;
+  padding: 16px 18px;
+  border: 1px solid #e3e9f4;
+  border-radius: 13px;
+  background: #fff;
+}
+.signature-card.is-disabled { border-style: dashed; background: #fafbfc; }
+.signature-card.is-disabled .signature-copy,
+.signature-card.is-disabled .signature-variants { opacity: .62; }
+.signature-title { min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.signature-title strong { color: #203657; font-size: 17px; }
+.signature-title code { color: #7b8aa5; font-size: 11px; }
+.signature-copy p { margin: 9px 0 6px; color: #5f6e88; font-size: 13px; line-height: 1.6; }
+.signature-copy small { color: #8a96aa; }
+.signature-variants { display: grid; gap: 6px; }
+.signature-variant {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 9px;
+  border-radius: 8px;
+  background: #f7f9fd;
+}
+.signature-variant > span { width: 58px; color: #5e6e8b; font-size: 12px; font-weight: 600; }
+.signature-variant .el-button { margin: 0; padding: 6px 0; }
+.signature-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-self: end;
+  width: 80px;
+  gap: 7px;
+}
+.signature-actions .el-button { margin: 0; }
+.signature-editor-alert { margin-bottom: 10px; }
+.signature-editor-form { margin: 0; }
+::v-deep .signature-editor-form .el-form-item { margin-bottom: 10px; }
+::v-deep .signature-editor-form .el-form-item__label {
+  padding-bottom: 4px;
+  color: #4b5870;
+  line-height: 22px;
+}
+::v-deep .signature-editor-dialog .el-dialog__header { padding: 16px 22px 12px; }
+::v-deep .signature-editor-dialog .el-dialog__body {
+  max-height: calc(92vh - 116px);
+  overflow-y: auto;
+  padding: 8px 22px 6px;
+}
+::v-deep .signature-editor-dialog .el-dialog__footer { padding: 10px 22px 16px; }
+.signature-editor-assets {
+  display: grid;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 10px 12px;
+  border: 1px solid #dfe7f3;
+  border-radius: 11px;
+  background: #fafcff;
+}
+.signature-editor-assets-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 1px;
+}
+.signature-editor-assets-head > div { display: flex; flex-direction: column; gap: 3px; }
+.signature-editor-assets-head strong { color: #2f4263; font-size: 14px; }
+.signature-editor-assets-head span { color: #8290a7; font-size: 12px; line-height: 1.4; }
 ::v-deep .el-dialog { max-width: calc(100vw - 32px); border-radius: 14px; }
 
 @media (max-width: 1180px) {
@@ -853,7 +1438,12 @@ pre {
   .persona-card, .gallery-card { min-height: 0; }
   .card-description { min-height: 66px; }
   .section-head { align-items: flex-start; flex-direction: column; }
+  .version-management-bar,
+  .persona-danger-zone { align-items: flex-start; flex-direction: column; }
   .diff-controls { width: 100%; flex-wrap: wrap; }
   .compiler-help { align-items: flex-start; flex-wrap: wrap; }
+  .signature-toolbar { align-items: flex-start; flex-direction: column; }
+  .signature-card { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .signature-actions { width: auto; flex-direction: row; justify-self: end; }
 }
 </style>

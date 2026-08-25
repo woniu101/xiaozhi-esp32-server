@@ -44,6 +44,12 @@ class PersonaSpec:
     relationship_policy: dict[str, Any] = field(default_factory=dict)
     examples: list[dict[str, Any]] = field(default_factory=list)
     limitations: list[str] = field(default_factory=list)
+    # Lossless upstream behavior source. Structured fields above are indexes used by
+    # Companion Core; they are not allowed to become the only copy of a Skill.
+    source_behavior: str = ""
+    source_sections: list[dict[str, Any]] = field(default_factory=list)
+    signature_utterances: list[dict[str, Any]] = field(default_factory=list)
+    conversion_coverage: dict[str, Any] = field(default_factory=dict)
     quality: dict[str, Any] = field(default_factory=dict)
     schema_version: str = PERSONA_SCHEMA_VERSION
 
@@ -66,6 +72,10 @@ class PersonaSpec:
             "relationship_policy",
             "examples",
             "limitations",
+            "source_behavior",
+            "source_sections",
+            "signature_utterances",
+            "conversion_coverage",
             "quality",
             "schema_version",
         }

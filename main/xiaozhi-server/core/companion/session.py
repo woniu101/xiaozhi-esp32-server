@@ -25,4 +25,8 @@ class CompanionSession:
     recent_example_turns: list[list[str]] = field(default_factory=list)
     recent_response_acts: list[str] = field(default_factory=list)
     recent_reply_openings: list[str] = field(default_factory=list)
+    # Manager API signature assets are downloaded once when the session opens.
+    # The canonical spec keeps portable asset:// URIs; only this process-local
+    # map contains machine-specific cache paths.
+    signature_asset_files: dict[str, str] = field(default_factory=dict)
     commit_pending: bool = False

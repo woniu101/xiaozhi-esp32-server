@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 
 from core.companion.emotion import EmotionEngine
-from core.companion.example_selector import render_examples, select_examples, strip_static_examples
+from core.companion.example_selector import (
+    render_examples,
+    render_source_sections,
+    select_examples,
+    select_source_sections,
+    strip_static_examples,
+)
 from core.companion.overlay import render_overlay
 from core.companion.privacy import is_safe_memory_text
 from core.companion.relationship import RelationshipEngine
@@ -13,10 +19,12 @@ from core.companion.state_models import (
     CompanionEvent,
     CompanionState,
     CompanionTurnContext,
+    UserAffect,
     UserTurnSignal,
 )
 
 from .session import CompanionSession
+from .signature_audio import render_signature_prompt
 
 
 class CompanionContextBuilder:
@@ -35,6 +43,7 @@ class CompanionContextBuilder:
         turn_id: str | None = None,
         track_turn: bool = True,
         user_turn_signal: UserTurnSignal | None = None,
+        user_affect: UserAffect | None = None,
     ) -> CompanionTurnContext:
         effective_state = state or session.state
         explicit_recall = is_explicit_recall_request(user_message)
@@ -73,6 +82,12 @@ class CompanionContextBuilder:
                 item_id for turn_ids in session.recent_example_turns for item_id in turn_ids
             },
             limit=3,
+        )
+        scene_sections = select_source_sections(
+            session.persona_spec.source_sections,
+            user_message,
+            plan,
+            limit=2,
         )
         runtime = (
             "<companion_runtime>\n"
@@ -133,13 +148,23 @@ class CompanionContextBuilder:
             )
         return CompanionTurnContext(
             persona_prompt="\n\n".join(
-                block for block in (strip_static_examples(session.persona_prompt), render_overlay(session.overlay)) if block
+                block for block in (
+                    strip_static_examples(session.persona_prompt),
+                    render_signature_prompt(session),
+                    render_overlay(session.overlay),
+                ) if block
             ),
             runtime_state_prompt=runtime,
             relevant_memories_prompt=memory_prompt,
             response_plan_prompt=plan.render(),
             situational_examples_prompt="\n\n".join(
-                block for block in (render_examples(examples), diversity_prompt) if block
+                block
+                for block in (
+                    render_source_sections(scene_sections),
+                    render_examples(examples),
+                    diversity_prompt,
+                )
+                if block
             ),
             expected_expression=expression,
             metadata={
@@ -149,10 +174,18 @@ class CompanionContextBuilder:
                 "response_plan": plan.to_dict(),
                 "recalled_memory_ids": [item.get("id") for item in safe_memories if item.get("id") is not None],
                 "selected_example_ids": [item.get("id") for item in examples],
+                "selected_source_section_ids": [
+                    item.get("id") for item in scene_sections
+                ],
                 "event_types": [item.event_type for item in (events or [])],
                 "user_turn_signal": (
                     user_turn_signal.to_diagnostic_dict()
                     if user_turn_signal is not None
+                    else {}
+                ),
+                "user_affect": (
+                    user_affect.to_diagnostic_dict()
+                    if user_affect is not None
                     else {}
                 ),
             },

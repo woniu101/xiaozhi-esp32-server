@@ -23,6 +23,19 @@ public interface PersonaDao {
     int insertImportJob(
             @Param("id") String id,
             @Param("ownerUserId") Long ownerUserId,
+            @Param("expectedPersonaId") String expectedPersonaId,
+            @Param("sourceType") String sourceType,
+            @Param("sourceUrl") String sourceUrl,
+            @Param("sourceRef") String sourceRef,
+            @Param("artifactPath") String artifactPath,
+            @Param("status") String status);
+
+    int insertRecompileJob(
+            @Param("id") String id,
+            @Param("ownerUserId") Long ownerUserId,
+            @Param("expectedPersonaId") String expectedPersonaId,
+            @Param("baseVersion") String baseVersion,
+            @Param("inheritSignatureAudio") boolean inheritSignatureAudio,
             @Param("sourceType") String sourceType,
             @Param("sourceUrl") String sourceUrl,
             @Param("sourceRef") String sourceRef,
@@ -57,6 +70,58 @@ public interface PersonaDao {
 
     Map<String, Object> selectSourceIdentity(@Param("personaId") String personaId);
 
+    int countPersonaBindings(@Param("personaId") String personaId);
+
+    List<Map<String, Object>> selectOwnedPersonaBindings(
+            @Param("personaId") String personaId,
+            @Param("userId") Long userId);
+
+    List<String> selectPersonaArtifactPaths(
+            @Param("personaId") String personaId,
+            @Param("userId") Long userId);
+
+    int clearPersonaBindings(@Param("personaId") String personaId);
+
+    int deletePersonaMemories(@Param("personaId") String personaId);
+
+    int deletePersonaEvents(@Param("personaId") String personaId);
+
+    int deletePersonaTurns(@Param("personaId") String personaId);
+
+    int deletePersonaStates(@Param("personaId") String personaId);
+
+    int deletePersonaImportJobs(
+            @Param("personaId") String personaId,
+            @Param("userId") Long userId);
+
+    int deletePersonaAudit(
+            @Param("personaId") String personaId,
+            @Param("userId") Long userId);
+
+    int hardDeletePersonaSource(
+            @Param("personaId") String personaId,
+            @Param("userId") Long userId);
+
+    Map<String, Object> selectLifecycleVersions(@Param("personaId") String personaId);
+
+    int deleteSignatureAssetsOutsideLifecycle(
+            @Param("personaId") String personaId,
+            @Param("retainedVersions") List<String> retainedVersions);
+
+    int deleteSignatureOverridesOutsideLifecycle(
+            @Param("personaId") String personaId,
+            @Param("retainedVersions") List<String> retainedVersions);
+
+    int deleteTestRunsOutsideLifecycle(
+            @Param("personaId") String personaId,
+            @Param("retainedVersions") List<String> retainedVersions);
+
+    int deleteVersionsOutsideLifecycle(
+            @Param("personaId") String personaId,
+            @Param("retainedVersions") List<String> retainedVersions);
+
+    int clearPinnedPersonaVersions(@Param("personaId") String personaId);
+
     int upsertPersonaSource(Map<String, Object> params);
 
     int insertPersonaVersion(Map<String, Object> params);
@@ -64,6 +129,15 @@ public interface PersonaDao {
     Map<String, Object> selectVersionByHash(
             @Param("personaId") String personaId,
             @Param("version") String version);
+
+    Map<String, Object> selectRevisionByCompiledHash(
+            @Param("personaId") String personaId,
+            @Param("revisionRoot") String revisionRoot,
+            @Param("compiledHash") String compiledHash);
+
+    int selectMaxRevisionNo(
+            @Param("personaId") String personaId,
+            @Param("revisionRoot") String revisionRoot);
 
     List<Map<String, Object>> selectPersonas(@Param("userId") Long userId);
 
@@ -76,20 +150,46 @@ public interface PersonaDao {
             @Param("personaId") String personaId,
             @Param("version") String version);
 
+    List<Map<String, Object>> selectSignatureOverrides(
+            @Param("personaId") String personaId,
+            @Param("version") String version);
+
+    int upsertSignatureOverride(Map<String, Object> params);
+
+    int setSignatureOverrideDisabled(
+            @Param("personaId") String personaId,
+            @Param("version") String version,
+            @Param("signatureKey") String signatureKey,
+            @Param("ownerUserId") Long ownerUserId,
+            @Param("disabled") boolean disabled);
+
+    List<Map<String, Object>> selectSignatureAssets(
+            @Param("personaId") String personaId,
+            @Param("version") String version);
+
+    int upsertSignatureAsset(Map<String, Object> params);
+
+    Map<String, Object> selectSignatureAsset(@Param("assetId") String assetId);
+
+    int deleteSignatureAsset(
+            @Param("assetId") String assetId,
+            @Param("ownerUserId") Long ownerUserId);
+
     int publishVersion(
             @Param("personaId") String personaId,
             @Param("version") String version,
             @Param("userId") Long userId);
 
-    int publishSource(
+    int applySourceVersion(
             @Param("personaId") String personaId,
             @Param("version") String version,
+            @Param("userId") Long userId);
+
+    int restorePreviousVersion(
+            @Param("personaId") String personaId,
             @Param("userId") Long userId,
-            @Param("visibility") String visibility);
-
-    int setPublishedPointer(@Param("personaId") String personaId, @Param("version") String version);
-
-    int archiveVersion(@Param("personaId") String personaId, @Param("version") String version);
+            @Param("currentVersion") String currentVersion,
+            @Param("previousVersion") String previousVersion);
 
     int insertTestRun(Map<String, Object> params);
 

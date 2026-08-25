@@ -51,10 +51,25 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
         else:
             # 新句子或流控器未初始化，立即发送
             await send_tts_message(conn, "sentence_start", text)
+    elif sentenceType == SentenceType.MIDDLE and text:
+        # Fixed signature audio is appended after the generated lead-in. Queue its
+        # subtitle at the exact audio boundary so clients show Ciallo (or another
+        # signature phrase) instead of only playing an invisible file segment.
+        if (
+            hasattr(conn, "audio_rate_controller")
+            and conn.audio_rate_controller
+            and getattr(conn, "audio_flow_control", {}).get("sentence_id")
+            == conn.sentence_id
+        ):
+            conn.audio_rate_controller.add_message(
+                lambda: send_tts_message(conn, "sentence_start", text)
+            )
+        else:
+            await send_tts_message(conn, "sentence_start", text)
 
     await sendAudio(conn, audios)
     # 发送句子开始消息
-    if sentenceType is not SentenceType.MIDDLE:
+    if sentenceType is not SentenceType.MIDDLE or text:
         conn.logger.bind(tag=TAG).info(f"发送音频消息: {sentenceType}, {text}")
 
     # 发送结束消息（如果是最后一个文本）

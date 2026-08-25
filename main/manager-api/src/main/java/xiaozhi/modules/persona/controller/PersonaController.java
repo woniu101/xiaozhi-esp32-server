@@ -1,10 +1,12 @@
 package xiaozhi.modules.persona.controller;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -12,8 +14,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,7 +26,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import xiaozhi.common.exception.RenException;
 import xiaozhi.common.utils.Result;
-import xiaozhi.modules.persona.dto.PersonaManagementDTO.PublishRequest;
+import xiaozhi.modules.persona.dto.PersonaManagementDTO.RecompileRequest;
 import xiaozhi.modules.persona.dto.PersonaManagementDTO.UrlImportRequest;
 import xiaozhi.modules.persona.dto.PersonaManagementDTO.FilesystemMigrationRequest;
 import xiaozhi.modules.persona.dto.PersonaManagementDTO.ConversationTestRequest;
@@ -31,6 +35,7 @@ import xiaozhi.modules.persona.service.PersonaGalleryService;
 import xiaozhi.modules.persona.service.PersonaManagementService;
 import xiaozhi.modules.persona.service.PersonaMigrationService;
 import xiaozhi.modules.persona.service.PersonaService;
+import xiaozhi.modules.persona.service.PersonaSignatureService;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.enums.SuperAdminEnum;
 
@@ -45,6 +50,7 @@ public class PersonaController {
     private final PersonaService personaService;
     private final PersonaGalleryService galleryService;
     private final PersonaMigrationService migrationService;
+    private final PersonaSignatureService signatureService;
 
     @GetMapping("/gallery")
     @Operation(summary = "浏览在线 Persona 画廊")
@@ -122,6 +128,44 @@ public class PersonaController {
         return new Result<String>().ok(importService.createUpload(SecurityUser.getUserId(), file));
     }
 
+    @PostMapping("/{personaId}/upgrade/source")
+    @Operation(summary = "从原 GitHub 来源创建受目标 Persona 保护的升级任务")
+    public Result<String> upgradeFromSource(@PathVariable("personaId") String personaId) {
+        return new Result<String>().ok(
+                importService.createUpgradeFromSource(SecurityUser.getUserId(), personaId));
+    }
+
+    @PostMapping("/{personaId}/upgrade/upload")
+    @Operation(summary = "上传新版 ZIP 并校验其 Persona ID")
+    public Result<String> upgradeUpload(
+            @PathVariable("personaId") String personaId,
+            @RequestParam("file") MultipartFile file) {
+        return new Result<String>().ok(
+                importService.createUpgradeUpload(SecurityUser.getUserId(), personaId, file));
+    }
+
+    @PostMapping("/{personaId}/versions/{version}/recompile")
+    @Operation(summary = "使用当前编译器重新解析历史 Persona 版本")
+    public Result<String> recompile(
+            @PathVariable("personaId") String personaId,
+            @PathVariable("version") String version,
+            @RequestBody(required = false) RecompileRequest request) {
+        boolean inheritAudio = request == null || request.isInheritSignatureAudio();
+        return new Result<String>().ok(importService.createRecompile(
+                SecurityUser.getUserId(), personaId, version, inheritAudio));
+    }
+
+    @PostMapping("/{personaId}/versions/{version}/recompile/upload")
+    @Operation(summary = "上传历史源码快照并使用当前编译器重新解析")
+    public Result<String> recompileUpload(
+            @PathVariable("personaId") String personaId,
+            @PathVariable("version") String version,
+            @RequestParam(value = "inheritSignatureAudio", defaultValue = "true") boolean inheritSignatureAudio,
+            @RequestParam("file") MultipartFile file) {
+        return new Result<String>().ok(importService.createRecompileUpload(
+                SecurityUser.getUserId(), personaId, version, inheritSignatureAudio, file));
+    }
+
     @GetMapping("/import/jobs/{jobId}")
     public Result<Map<String, Object>> importJob(@PathVariable("jobId") String jobId) {
         return new Result<Map<String, Object>>().ok(importService.getJob(SecurityUser.getUserId(), jobId));
@@ -139,33 +183,35 @@ public class PersonaController {
         return new Result<Map<String, Object>>().ok(migrationService.migrate(SecurityUser.getUserId(), request));
     }
 
-    @PostMapping("/{personaId}/versions/{version}/publish")
-    public Result<Void> publish(
+    @PostMapping("/{personaId}/versions/{version}/apply")
+    @Operation(summary = "应用已通过测试的人物更新")
+    public Result<Void> applyUpdate(
             @PathVariable("personaId") String personaId,
-            @PathVariable("version") String version,
-            @RequestBody(required = false) PublishRequest request) {
-        String visibility = request == null ? "private" : request.getVisibility();
-        if ("public".equals(visibility)
-                && !Integer.valueOf(SuperAdminEnum.YES.value()).equals(SecurityUser.getUser().getSuperAdmin())) {
-            throw new RenException("只有超级管理员可以发布全局公开 Persona");
-        }
-        managementService.publish(SecurityUser.getUserId(), personaId, version, visibility);
+            @PathVariable("version") String version) {
+        managementService.applyUpdate(SecurityUser.getUserId(), personaId, version);
         return new Result<Void>().ok(null);
     }
 
-    @PostMapping("/{personaId}/versions/{version}/rollback")
-    public Result<Void> rollback(
-            @PathVariable("personaId") String personaId,
-            @PathVariable("version") String version) {
-        managementService.rollback(SecurityUser.getUserId(), personaId, version);
+    @PostMapping("/{personaId}/restore-previous")
+    @Operation(summary = "恢复人物上一版")
+    public Result<Void> restorePrevious(@PathVariable("personaId") String personaId) {
+        managementService.restorePrevious(SecurityUser.getUserId(), personaId);
         return new Result<Void>().ok(null);
     }
 
-    @PostMapping("/{personaId}/versions/{version}/archive")
-    public Result<Void> archive(
+    @GetMapping("/{personaId}/usage")
+    @Operation(summary = "查询 Persona 的智能体绑定占用")
+    public Result<Map<String, Object>> usage(@PathVariable("personaId") String personaId) {
+        return new Result<Map<String, Object>>().ok(
+                managementService.usage(SecurityUser.getUserId(), personaId));
+    }
+
+    @DeleteMapping("/{personaId}")
+    @Operation(summary = "永久删除人物、自动解绑并清除其全部数据")
+    public Result<Void> delete(
             @PathVariable("personaId") String personaId,
-            @PathVariable("version") String version) {
-        managementService.archive(SecurityUser.getUserId(), personaId, version);
+            @RequestParam("confirmation") String confirmation) {
+        managementService.delete(SecurityUser.getUserId(), personaId, confirmation);
         return new Result<Void>().ok(null);
     }
 
@@ -186,6 +232,78 @@ public class PersonaController {
             @PathVariable("version") String version) {
         return new Result<List<Map<String, Object>>>().ok(
                 managementService.testRuns(SecurityUser.getUserId(), personaId, version));
+    }
+
+    @GetMapping("/{personaId}/versions/{version}/signatures")
+    @Operation(summary = "列出人物版本的招牌表达和语音资产")
+    public Result<List<Map<String, Object>>> signatures(
+            @PathVariable("personaId") String personaId,
+            @PathVariable("version") String version) {
+        return new Result<List<Map<String, Object>>>().ok(
+                signatureService.list(SecurityUser.getUserId(), personaId, version));
+    }
+
+    @PostMapping("/{personaId}/versions/{version}/signatures/{signatureKey}")
+    @Operation(summary = "新增或覆盖招牌表达定义")
+    public Result<Map<String, Object>> upsertSignature(
+            @PathVariable("personaId") String personaId,
+            @PathVariable("version") String version,
+            @PathVariable("signatureKey") String signatureKey,
+            @RequestBody Map<String, Object> request) {
+        return new Result<Map<String, Object>>().ok(signatureService.upsertDefinition(
+                SecurityUser.getUserId(), personaId, version, signatureKey, request));
+    }
+
+    @PostMapping("/{personaId}/versions/{version}/signatures/{signatureKey}/enabled")
+    @Operation(summary = "启用或禁用一条招牌表达")
+    public Result<Void> setSignatureEnabled(
+            @PathVariable("personaId") String personaId,
+            @PathVariable("version") String version,
+            @PathVariable("signatureKey") String signatureKey,
+            @RequestBody Map<String, Object> request) {
+        boolean enabled = request != null && Boolean.TRUE.equals(request.get("enabled"));
+        signatureService.setEnabled(
+                SecurityUser.getUserId(), personaId, version, signatureKey, enabled);
+        return new Result<Void>().ok(null);
+    }
+
+    @PostMapping("/{personaId}/versions/{version}/signatures/{signatureKey}/assets/{variant}")
+    @Operation(summary = "上传或替换招牌语音变体")
+    public Result<Map<String, Object>> uploadSignatureAsset(
+            @PathVariable("personaId") String personaId,
+            @PathVariable("version") String version,
+            @PathVariable("signatureKey") String signatureKey,
+            @PathVariable("variant") String variant,
+            @RequestParam("file") MultipartFile file) {
+        return new Result<Map<String, Object>>().ok(signatureService.uploadAsset(
+                SecurityUser.getUserId(), personaId, version, signatureKey, variant, file));
+    }
+
+    @GetMapping("/signature-assets/{assetId}/play")
+    @Operation(summary = "试听招牌语音")
+    public ResponseEntity<byte[]> playSignatureAsset(@PathVariable("assetId") String assetId) {
+        Map<String, Object> asset = signatureService.playback(SecurityUser.getUserId(), assetId);
+        byte[] audio = (byte[]) asset.get("audioData");
+        MediaType mediaType;
+        try {
+            mediaType = MediaType.parseMediaType(String.valueOf(asset.get("contentType")));
+        } catch (Exception ignored) {
+            mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(mediaType);
+        headers.setContentLength(audio.length);
+        headers.setContentDisposition(ContentDisposition.inline()
+                .filename(String.valueOf(asset.get("originalFilename")), StandardCharsets.UTF_8)
+                .build());
+        return new ResponseEntity<>(audio, headers, HttpStatus.OK);
+    }
+
+    @DeleteMapping("/signature-assets/{assetId}")
+    @Operation(summary = "删除招牌语音变体")
+    public Result<Void> deleteSignatureAsset(@PathVariable("assetId") String assetId) {
+        signatureService.deleteAsset(SecurityUser.getUserId(), assetId);
+        return new Result<Void>().ok(null);
     }
 
     @GetMapping("/{personaId}/versions/{version}/export")

@@ -73,7 +73,7 @@
                a.language          AS language,
                COALESCE(p.enabled, 0) AS companionEnabled,
                p.persona_source_id AS personaId,
-               p.published_version AS personaVersion,
+               NULL AS personaVersion,
                p.companion_overlay_json AS companionOverlay,
                a.sort,
                a.creator,
@@ -131,7 +131,7 @@
             agent_id, persona_source_id, published_version, enabled,
             companion_overlay_json, creator, created_at, updater, updated_at
         ) VALUES (
-            #{agentId}, NULLIF(#{personaId}, ''), NULLIF(#{personaVersion}, ''), COALESCE(#{enabled}, 0),
+            #{agentId}, NULLIF(#{personaId}, ''), NULL, COALESCE(#{enabled}, 0),
             #{companionOverlay}, #{userId}, NOW(), #{userId}, NOW()
         )
         ON DUPLICATE KEY UPDATE
@@ -139,10 +139,7 @@
                 WHEN #{personaId} IS NULL THEN persona_source_id
                 ELSE NULLIF(#{personaId}, '')
             END,
-            published_version = CASE
-                WHEN #{personaVersion} IS NULL THEN published_version
-                ELSE NULLIF(#{personaVersion}, '')
-            END,
+            published_version = NULL,
             enabled = COALESCE(#{enabled}, enabled),
             companion_overlay_json = COALESCE(#{companionOverlay}, companion_overlay_json),
             updater = #{userId},

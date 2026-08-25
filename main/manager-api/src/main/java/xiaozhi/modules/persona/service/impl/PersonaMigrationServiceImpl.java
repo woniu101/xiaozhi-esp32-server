@@ -99,7 +99,7 @@ public class PersonaMigrationServiceImpl implements PersonaMigrationService {
                 JsonUtils.toJsonString(Map.of("artifactHash", request.getArtifactHash())));
         boolean publish = "published".equals(request.getSourceStatus()) && valid && "passed".equals(testStatus);
         if (publish) {
-            managementService.publish(userId, request.getPersonaId(), request.getVersion(), "private");
+            managementService.applyUpdate(userId, request.getPersonaId(), request.getVersion());
         }
         return Map.of(
                 "personaId", request.getPersonaId(),

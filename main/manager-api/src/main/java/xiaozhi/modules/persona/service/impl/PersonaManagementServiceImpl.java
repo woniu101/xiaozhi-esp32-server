@@ -9,15 +9,21 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import xiaozhi.common.exception.RenException;
 import xiaozhi.common.utils.JsonUtils;
 import xiaozhi.modules.persona.dao.PersonaDao;
@@ -27,11 +33,14 @@ import xiaozhi.modules.persona.service.PersonaManagementService;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PersonaManagementServiceImpl implements PersonaManagementService {
-    private static final Set<String> VISIBILITIES = Set.of("private", "shared", "public");
     private final PersonaDao personaDao;
     private final PersonaCompilerClient compilerClient;
     private final PersonaMetrics metrics;
+
+    @Value("${companion.artifact-dir:uploadfile/personas}")
+    private String artifactDirectory;
 
     @Override
     public List<Map<String, Object>> list(Long userId) {
@@ -44,7 +53,7 @@ public class PersonaManagementServiceImpl implements PersonaManagementService {
         if (value == null) {
             throw new RenException("Persona 不存在或无权访问");
         }
-        return value;
+        return new LinkedHashMap<>(value);
     }
 
     @Override
@@ -91,58 +100,99 @@ public class PersonaManagementServiceImpl implements PersonaManagementService {
     }
 
     @Override
+    public Map<String, Object> usage(Long userId, String personaId) {
+        requireOwner(userId, personaId);
+        int bindingCount = personaDao.countPersonaBindings(personaId);
+        List<Map<String, Object>> ownBindings = personaDao.selectOwnedPersonaBindings(personaId, userId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("bindingCount", bindingCount);
+        result.put("ownBindings", ownBindings);
+        result.put("externalBindingCount", Math.max(0, bindingCount - ownBindings.size()));
+        result.put("deletable", true);
+        result.put("willUnbind", bindingCount);
+        return result;
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
-    public void publish(Long userId, String personaId, String version, String visibility) {
-        String safeVisibility = StringUtils.defaultIfBlank(visibility, "private");
+    public void delete(Long userId, String personaId, String confirmation) {
+        String expected = personaId;
+        if (!expected.equals(StringUtils.trimToEmpty(confirmation))) {
+            throw new RenException("删除确认文本不匹配");
+        }
+        requireOwner(userId, personaId);
+        List<String> artifactPaths = personaDao.selectPersonaArtifactPaths(personaId, userId);
+
+        personaDao.clearPersonaBindings(personaId);
+        personaDao.deletePersonaMemories(personaId);
+        personaDao.deletePersonaEvents(personaId);
+        personaDao.deletePersonaTurns(personaId);
+        personaDao.deletePersonaStates(personaId);
+        personaDao.deletePersonaImportJobs(personaId, userId);
+        personaDao.deletePersonaAudit(personaId, userId);
+        if (personaDao.hardDeletePersonaSource(personaId, userId) != 1) {
+            throw new RenException("人物状态已变化，请刷新后重试");
+        }
+        afterCommit(() -> {
+            cleanupArtifactFiles(artifactPaths);
+            try {
+                compilerClient.evictPersonaCache(personaId);
+            } catch (RuntimeException error) {
+                log.warn("Persona {} 已清除，但运行时缓存通知失败，新会话将在缓存过期后生效", personaId);
+            }
+        });
+        metrics.increment("companion_persona_delete_total", "status", "success");
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void applyUpdate(Long userId, String personaId, String version) {
         try {
-            requireOwner(userId, personaId);
-            if (!VISIBILITIES.contains(safeVisibility)) {
-                throw new RenException("Persona 可见性不合法");
+            Map<String, Object> persona = requireOwner(userId, personaId);
+            if (version.equals(text(persona.get("publishedVersion")))) {
+                throw new RenException("该版本已经是当前使用版本");
             }
             Map<String, Object> target = version(userId, personaId, version);
-            if ("archived".equals(target.get("status"))) {
-                throw new RenException("归档版本不能发布");
+            if (!"draft".equals(target.get("status"))) {
+                throw new RenException("只能应用待更新版本");
             }
             if (!Boolean.TRUE.equals(castMap(target.get("validationReport")).get("valid"))) {
-                throw new RenException("Persona 未通过结构校验，不能发布");
+                throw new RenException("人物更新未通过结构校验，不能应用");
             }
             if (!"passed".equals(target.get("testStatus"))) {
-                throw new RenException("Persona 测试尚未通过，不能发布");
+                throw new RenException("人物更新测试尚未通过，不能应用");
             }
             if (personaDao.publishVersion(personaId, version, userId) != 1) {
-                throw new RenException("Persona 版本状态已变化，请刷新后重试");
+                throw new RenException("人物更新状态已变化，请刷新后重试");
             }
-            if (personaDao.publishSource(personaId, version, userId, safeVisibility) != 1) {
-                throw new RenException("Persona 发布状态更新失败，请刷新后重试");
+            if (personaDao.applySourceVersion(personaId, version, userId) != 1) {
+                throw new RenException("人物更新应用失败，请刷新后重试");
             }
-            audit(userId, "persona_published", personaId + "@" + version,
-                    Map.of("visibility", safeVisibility));
-            metrics.increment("companion_persona_publish_total", "kind", safeVisibility, "status", "success");
+            personaDao.clearPinnedPersonaVersions(personaId);
+            pruneVersions(personaId);
+            audit(userId, "persona_update_applied", personaId + "@" + version, Map.of());
+            afterCommit(() -> evictRuntimeCache(personaId));
+            metrics.increment("companion_persona_apply_total", "status", "success");
         } catch (RuntimeException error) {
-            metrics.increment("companion_persona_publish_total", "kind", safeVisibility, "status", "failed");
+            metrics.increment("companion_persona_apply_total", "status", "failed");
             throw error;
         }
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void rollback(Long userId, String personaId, String version) {
-        requireOwner(userId, personaId);
-        Map<String, Object> target = version(userId, personaId, version);
-        if (!"published".equals(target.get("status")) || personaDao.setPublishedPointer(personaId, version) != 1) {
-            throw new RenException("只能回滚到已经发布的 Persona 版本");
+    public void restorePrevious(Long userId, String personaId) {
+        Map<String, Object> persona = requireOwner(userId, personaId);
+        String current = text(persona.get("publishedVersion"));
+        String previous = text(persona.get("previousVersion"));
+        if (current.isBlank() || previous.isBlank()
+                || personaDao.restorePreviousVersion(personaId, userId, current, previous) != 1) {
+            throw new RenException("没有可恢复的上一版，或人物状态已经变化");
         }
-        audit(userId, "persona_rolled_back", personaId + "@" + version, Map.of());
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void archive(Long userId, String personaId, String version) {
-        requireOwner(userId, personaId);
-        if (personaDao.archiveVersion(personaId, version) != 1) {
-            throw new RenException("当前发布版本不能归档，请先发布或回滚到其他版本");
-        }
-        audit(userId, "persona_archived", personaId + "@" + version, Map.of());
+        personaDao.clearPinnedPersonaVersions(personaId);
+        audit(userId, "persona_previous_restored", personaId + "@" + previous,
+                Map.of("replacedVersion", current));
+        afterCommit(() -> evictRuntimeCache(personaId));
     }
 
     @Override
@@ -152,9 +202,6 @@ public class PersonaManagementServiceImpl implements PersonaManagementService {
         long started = System.nanoTime();
         requireOwner(userId, personaId);
         Map<String, Object> target = version(userId, personaId, version);
-        if ("archived".equals(target.get("status"))) {
-            throw new RenException("归档版本不能重新测试");
-        }
         List<Map<String, Object>> samples = conversationSamples == null
                 ? List.of()
                 : conversationSamples.subList(0, Math.min(500, conversationSamples.size()));
@@ -247,6 +294,65 @@ public class PersonaManagementServiceImpl implements PersonaManagementService {
         zip.closeEntry();
     }
 
+    private void cleanupArtifactFiles(List<String> artifactPaths) {
+        Path root = Path.of(StringUtils.defaultIfBlank(artifactDirectory, "uploadfile/personas"))
+                .toAbsolutePath().normalize();
+        for (String value : artifactPaths == null ? List.<String>of() : artifactPaths) {
+            try {
+                Path candidate = Path.of(value).toAbsolutePath().normalize();
+                if (candidate.startsWith(root) && Files.isRegularFile(candidate)) {
+                    Files.deleteIfExists(candidate);
+                }
+            } catch (Exception error) {
+                log.warn("Persona 清除后无法删除受控源码快照 {}", value);
+            }
+        }
+    }
+
+    private void pruneVersions(String personaId) {
+        List<String> retainedVersions = retainedLifecycleVersions(personaId);
+        if (retainedVersions.isEmpty()) {
+            log.warn("跳过 Persona {} 生命周期清理：未查询到任何应保留版本", personaId);
+            return;
+        }
+        personaDao.deleteSignatureAssetsOutsideLifecycle(personaId, retainedVersions);
+        personaDao.deleteSignatureOverridesOutsideLifecycle(personaId, retainedVersions);
+        personaDao.deleteTestRunsOutsideLifecycle(personaId, retainedVersions);
+        personaDao.deleteVersionsOutsideLifecycle(personaId, retainedVersions);
+    }
+
+    private List<String> retainedLifecycleVersions(String personaId) {
+        Map<String, Object> lifecycle = personaDao.selectLifecycleVersions(personaId);
+        if (lifecycle == null) return List.of();
+        return List.of("currentVersion", "previousVersion", "draftVersion").stream()
+                .map(lifecycle::get)
+                .map(PersonaManagementServiceImpl::text)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private void evictRuntimeCache(String personaId) {
+        try {
+            compilerClient.evictPersonaCache(personaId);
+        } catch (RuntimeException error) {
+            log.warn("Persona {} 当前版本已切换，但运行时缓存通知失败，新会话将在缓存过期后生效", personaId);
+        }
+    }
+
+    private static void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
+    }
+
     @Override
     public List<Map<String, Object>> auditTrail(Long userId, String personaId) {
         requireOwner(userId, personaId);
@@ -282,5 +388,9 @@ public class PersonaManagementServiceImpl implements PersonaManagementService {
         if (raw instanceof String text && StringUtils.isNotBlank(text)) {
             value.put(key, JsonUtils.parseMap(text));
         }
+    }
+
+    private static String text(Object value) {
+        return value == null ? "" : StringUtils.trimToEmpty(String.valueOf(value));
     }
 }

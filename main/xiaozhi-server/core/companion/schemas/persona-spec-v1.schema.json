@@ -42,7 +42,20 @@
       }
     },
     "expression": {"type": "object"},
-    "emotional_logic": {"type": "object"},
+    "emotional_logic": {
+      "type": "object",
+      "properties": {
+        "reactivity": {"type": "number", "minimum": 0.4, "maximum": 1.6},
+        "recovery_rate": {"type": "number", "minimum": 0.4, "maximum": 2.0},
+        "expressiveness": {"type": "number", "minimum": 0.35, "maximum": 1.35},
+        "minimum_hold_seconds": {"type": "number", "minimum": 0, "maximum": 600},
+        "repeat_damping": {"type": "number", "minimum": 0.3, "maximum": 1},
+        "repeat_window_seconds": {"type": "number", "minimum": 30, "maximum": 3600},
+        "negative_mood_cap": {"type": "number", "minimum": 0.45, "maximum": 0.85},
+        "negative_voice_cap": {"type": "number", "minimum": 0.35, "maximum": 0.75}
+      },
+      "additionalProperties": true
+    },
     "conflict_repair": {"type": "object"},
     "mental_models": {
       "type": "array",
@@ -73,6 +86,33 @@
       }
     },
     "limitations": {"type": "array"},
+    "source_behavior": {"type": "string", "maxLength": 100000},
+    "source_sections": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"type": "object", "additionalProperties": true}
+    },
+    "signature_utterances": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["id", "display_text", "semantic_rule", "assets", "fallback"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "display_text": {"type": "string", "minLength": 1, "maxLength": 160},
+          "explicit_aliases": {"type": "array", "maxItems": 16},
+          "semantic_rule": {"type": "string", "maxLength": 2000},
+          "positive_examples": {"type": "array", "maxItems": 20},
+          "ambiguity_policy": {"type": "string", "maxLength": 300},
+          "assets": {"type": "object"},
+          "style_map": {"type": "object"},
+          "fallback": {"enum": ["tts", "silence"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "conversion_coverage": {"type": "object"},
     "quality": {"type": "object"}
   },
   "additionalProperties": false

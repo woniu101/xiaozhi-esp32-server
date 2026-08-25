@@ -20,7 +20,11 @@ cache_manager.set(
 )
 
 from core.companion.event_extractor import RuleBasedEventExtractor
-from core.companion.input_signal import enrich_text_affect, parse_user_turn_signal
+from core.companion.input_signal import (
+    derive_user_affect,
+    enrich_text_affect,
+    parse_user_turn_signal,
+)
 from core.companion.presentation import render_expression_plan, resolve_turn_expression_plan
 from core.companion.state_models import CompanionEvent, EmotionState, UserTurnSignal
 from core.providers.asr.utils import lang_tag_filter
@@ -92,9 +96,27 @@ class InputSignalTest(unittest.TestCase):
         self.assertEqual("HAPPY", enriched.text_emotion)
         self.assertGreater(enriched.valence, 0.5)
 
+    def test_user_affect_keeps_conflicting_sources_visible(self):
+        affect = derive_user_affect(
+            UserTurnSignal(
+                turn_id="turn-conflict",
+                text="没事",
+                acoustic_emotion="SAD",
+                acoustic_confidence=0.72,
+                text_emotion="HAPPY",
+                text_confidence=0.81,
+                valence=0.48,
+                arousal=0.55,
+            )
+        )
+
+        self.assertEqual("HAPPY", affect.dominant)
+        self.assertTrue(affect.conflicting_sources)
+        self.assertEqual("SAD", affect.acoustic_emotion)
+
 
 class TurnExpressionPlanTest(unittest.TestCase):
-    def _session(self, events=None, **emotion):
+    def _session(self, events=None, emotional_logic=None, **emotion):
         defaults = EmotionState().__dict__
         defaults.update(emotion)
         defaults.pop("updated_at", None)
@@ -104,6 +126,7 @@ class TurnExpressionPlanTest(unittest.TestCase):
             turn_preview_state=None,
             turn_preview_events=events or [],
             overlay={"tts_dynamic_emotion": True},
+            persona_spec=SimpleNamespace(emotional_logic=emotional_logic or {}),
         )
 
     def test_distress_has_one_comforting_plan_for_text_tts_and_device(self):
@@ -132,6 +155,25 @@ class TurnExpressionPlanTest(unittest.TestCase):
         self.assertIn("soft", plan.modifiers)
         self.assertEqual("warm", plan.provider_hint["style"])
         self.assertEqual("proactive", plan.source)
+
+    def test_voice_is_subtler_than_text_and_negative_style_is_capped(self):
+        plan = resolve_turn_expression_plan(
+            self._session(
+                [CompanionEvent("user_insulted_companion", 1.0)],
+                emotional_logic={
+                    "expressiveness": 1.3,
+                    "negative_voice_cap": 0.5,
+                },
+                irritation=0.9,
+            ),
+            turn_id="turn-negative-cap",
+        )
+
+        self.assertEqual("annoyed", plan.primary_style)
+        self.assertGreater(plan.text_intensity, plan.intensity)
+        self.assertEqual(plan.intensity, plan.voice_intensity)
+        self.assertLessEqual(plan.intensity, 0.5)
+        self.assertIn("restrained", plan.modifiers)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,11 @@ import yaml
 from core.companion.importers.base import ImportInspection, ImportResult, PersonaImportAdapter
 from core.companion.importers.compiler import PersonaCompiler
 from core.companion.importers.markdown_sections import bullets, find_section, find_sections, parse_sections, prose
-from core.companion.importers.safe_source import locate_artifacts, materialize_source
+from core.companion.importers.safe_source import (
+    locate_artifacts,
+    locate_behavior_references,
+    materialize_source,
+)
 from core.companion.importers.validator import PersonaSpecValidator
 from core.companion.models import PersonaSpec
 from core.companion.persona.registry import FilesystemPersonaRegistry, content_hash
@@ -36,6 +40,19 @@ PERSONA_SECTION_MARKERS = (
     "relationship context",
     "expression dna",
     "mental models",
+)
+
+SECTION_CATEGORY_RULES = (
+    ("core", 100, re.compile(r"角色扮演|core (?:rules|personality)|核心(?:规则|性格)|最高优先" , re.I)),
+    ("dialogue", 98, re.compile(r"对话纪律|对话规则|dialogue|conversation", re.I)),
+    ("expression", 96, re.compile(r"表达|说话|口头禅|称谓|signature|expression|voice", re.I)),
+    ("boundaries", 94, re.compile(r"边界|禁忌|反模式|诚实|限制|boundar|limit|reject", re.I)),
+    ("turns", 90, re.compile(r"回合|场景|response|turn", re.I)),
+    ("examples", 72, re.compile(r"示例|example|招牌点单", re.I)),
+    ("identity", 68, re.compile(r"身份|关系背景|identity|relationship context", re.I)),
+    ("mental_models", 62, re.compile(r"模型|思考|mental model", re.I)),
+    ("heuristics", 60, re.compile(r"启发式|判断|优先级|heuristic|quick rule", re.I)),
+    ("references", 0, re.compile(r"reference|参考|资料|来源|按需加载", re.I)),
 )
 
 
@@ -60,6 +77,76 @@ def _read_skill_frontmatter(markdown: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("SKILL.md frontmatter 必须是对象")
     return value
+
+
+def _clean_source_behavior(markdown: str) -> str:
+    """Preserve upstream behavior text while removing packaging-only syntax."""
+    value = SKILL_FRONTMATTER_RE.sub("", markdown, count=1)
+    value = re.sub(r"<br\s*/?>", "\n", value, flags=re.I)
+    value = value.replace("\x00", "")
+    value = re.sub(r"[ \t]+\n", "\n", value)
+    value = re.sub(r"\n{4,}", "\n\n\n", value)
+    return value.strip()[:100_000]
+
+
+def _section_category(title: str) -> tuple[str, int]:
+    normalized = re.sub(r"[`*_]", "", str(title or "")).strip()
+    for category, priority, pattern in SECTION_CATEGORY_RULES:
+        if pattern.search(normalized):
+            return category, priority
+    return "other", 40
+
+
+def _source_section_index(
+    sections, source_path: str = "SKILL.md", order_offset: int = 0
+) -> list[dict[str, Any]]:
+    result = []
+    for section in sections:
+        if section.title == "document" and not section.content.strip():
+            continue
+        source_order = order_offset + len(result)
+        category, priority = _section_category(section.title)
+        result.append(
+            {
+                "id": f"source-section-{source_order + 1:03d}",
+                "title": section.title,
+                "level": section.level,
+                "parent_titles": list(section.parent_titles),
+                "content": section.content.strip(),
+                "category": category,
+                "runtime_priority": priority,
+                "source_order": source_order,
+                "source_path": source_path,
+            }
+        )
+    return result
+
+
+def _conversion_coverage(
+    source_behavior: str,
+    source_sections: list[dict[str, Any]],
+    behavior_references: list[str] | None = None,
+) -> dict[str, Any]:
+    structured_categories = {
+        "core", "dialogue", "expression", "boundaries", "examples",
+        "identity", "mental_models", "heuristics",
+    }
+    structured = [item["title"] for item in source_sections if item["category"] in structured_categories]
+    unmapped = [item["title"] for item in source_sections if item["category"] == "other"]
+    references = [item["title"] for item in source_sections if item["category"] == "references"]
+    return {
+        "mode": "lossless-hybrid",
+        "source_chars": len(source_behavior),
+        "section_count": len(source_sections),
+        "preserved_section_count": len(source_sections),
+        "structured_section_count": len(structured),
+        "structured_sections": structured,
+        "unmapped_sections": unmapped,
+        "reference_sections": references,
+        "behavior_reference_files": list(behavior_references or []),
+        "dropped_sections": [],
+        "warnings": (["部分章节仅原文保留，未生成结构化索引"] if unmapped else []),
+    }
 
 
 def _skill_display_name(markdown: str, frontmatter: dict[str, Any]) -> str:
@@ -182,6 +269,13 @@ def _extract_examples(markdown: str) -> list[dict[str, Any]]:
         line = raw_line.strip().lstrip("> ")
         if not line:
             continue
+        heading_match = re.match(r"^#{2,6}\s+(.+?)\s*$", line)
+        if heading_match:
+            scene = re.sub(r"[`*_]", "", heading_match.group(1)).strip()[:100]
+            continue
+        line = re.sub(r"<br\s*/?>", "", line, flags=re.I).strip()
+        # Standard Skills commonly bold the speaker label: **用户**： / **我**：
+        line = re.sub(r"^\*\*\s*([^*]+?)\s*\*\*\s*([:：])", r"\1\2", line)
         scene_match = re.match(r"(?:when|场景|情境)\s*[:：]\s*(.+)", line, re.I)
         if scene_match:
             scene = scene_match.group(1).strip()
@@ -190,7 +284,7 @@ def _extract_examples(markdown: str) -> list[dict[str, Any]]:
         if user_match:
             pending_user = user_match.group(1).strip()
             continue
-        assistant_match = re.match(r"(?:assistant|角色|回复|你)\s*[:：]\s*(.+)", line, re.I)
+        assistant_match = re.match(r"(?:assistant|角色|回复|你|我)\s*[:：]\s*(.+)", line, re.I)
         if assistant_match and pending_user:
             examples.append(
                 {
@@ -205,6 +299,86 @@ def _extract_examples(markdown: str) -> list[dict[str, Any]]:
         if len(examples) >= 20:
             break
     return examples
+
+
+def _merge_examples(documents: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for source_path, markdown in documents:
+        for item in _extract_examples(markdown):
+            key = (str(item.get("user") or ""), str(item.get("assistant") or ""))
+            if not all(key) or key in seen:
+                continue
+            seen.add(key)
+            result.append(
+                {
+                    **item,
+                    "id": f"example-{len(result) + 1:03d}",
+                    "source_path": source_path,
+                }
+            )
+            if len(result) >= 50:
+                return result
+    return result
+
+
+def _extract_signature_utterances(markdown: str, examples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract explicit signature routing without reducing semantic rules to keywords."""
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_line in markdown.splitlines():
+        line = re.sub(r"<br\s*/?>", "", raw_line).strip().lstrip("-*+ ")
+        if "招牌" not in line and "signature" not in line.lower():
+            continue
+        aliases = []
+        for candidate in re.findall(r"`([^`]{1,100})`", line):
+            token = re.match(r"([A-Za-z][A-Za-z0-9._-]{1,40})", candidate.strip())
+            if token and token.group(1).lower() not in {item.lower() for item in aliases}:
+                aliases.append(token.group(1))
+        if not aliases:
+            latin = re.search(r"\b([A-Za-z][A-Za-z0-9._-]{2,40})\b", line)
+            if latin:
+                aliases.append(latin.group(1))
+        if not aliases:
+            continue
+        canonical = aliases[0]
+        signature_id = re.sub(r"[^a-z0-9._-]+", "-", canonical.lower()).strip("-")
+        if not signature_id or signature_id in seen:
+            continue
+        seen.add(signature_id)
+        display_text = canonical
+        decorated_candidates = [
+            candidate.strip()
+            for candidate in re.findall(r"`([^`]{1,100})`", line)
+            if canonical.lower() in candidate.lower()
+        ]
+        decorated = max(decorated_candidates, key=len, default="")
+        if decorated:
+            display_text = decorated
+        positive_examples = []
+        for item in examples:
+            if canonical.lower() in str(item.get("assistant") or "").lower():
+                positive_examples.append(str(item.get("user") or "")[:180])
+                if len(positive_examples) >= 8:
+                    break
+        result.append(
+            {
+                "id": signature_id[:64],
+                "display_text": display_text[:160],
+                "explicit_aliases": aliases[:8],
+                "semantic_rule": line[:1000],
+                "positive_examples": positive_examples,
+                "ambiguity_policy": "上下文不能唯一确定时不触发",
+                "assets": {},
+                "style_map": {
+                    "neutral": "classic", "restrained": "classic",
+                    "happy": "playful", "excited": "playful",
+                    "warm": "soft", "soft": "soft",
+                },
+                "fallback": "tts",
+            }
+        )
+    return result[:12]
 
 
 def _extract_mental_models(sections) -> list[dict[str, str]]:
@@ -300,9 +474,42 @@ def _normalize_persona(
     markdown: str,
     artifact_sha256: str,
     inferred_family: str | None = None,
+    behavior_references: dict[str, str] | None = None,
 ) -> PersonaSpec:
     sections = parse_sections(markdown)
+    behavior_documents = [("SKILL.md", markdown)] + list(
+        (behavior_references or {}).items()
+    )
+    cleaned_documents = [
+        (source_path, _clean_source_behavior(content))
+        for source_path, content in behavior_documents
+    ]
+    source_behavior = "\n\n".join(
+        (
+            content
+            if index == 0
+            else f"# 行为参考：{source_path}\n\n{content}"
+        )
+        for index, (source_path, content) in enumerate(cleaned_documents)
+        if content
+    )[:100_000].strip()
+    # The source index is behavior-only. Frontmatter remains available through
+    # normalized source metadata and must not consume runtime prompt budget.
+    source_sections: list[dict[str, Any]] = []
+    for source_path, content in cleaned_documents:
+        indexed = _source_section_index(
+            parse_sections(content), source_path, len(source_sections)
+        )
+        source_sections.extend(indexed)
+    source_sections = source_sections[:256]
     source = _normalize_source(meta, manifest, artifact_sha256, inferred_family)
+    if behavior_references:
+        source["behavior_reference_sha256"] = content_hash(
+            {
+                path: content.encode("utf-8")
+                for path, content in behavior_references.items()
+            }
+        )
     family = source["family"]
     display_name = str(manifest.get("display_name") or meta.get("display_name") or meta.get("name") or "Imported Persona")
     upstream_id = (
@@ -428,6 +635,7 @@ def _normalize_persona(
     # backwards-compatible recommendation derived from the source material.
     allowed_stages = ["familiar", "friend", "ambiguous", "lover", "intimate"]
 
+    examples = _merge_examples(behavior_documents)
     spec = PersonaSpec(
         id=persona_id,
         display_name=display_name,
@@ -451,8 +659,14 @@ def _normalize_persona(
             "intimacy_boundaries": conflict_repair["boundaries"],
             "source": "agent-binding",
         },
-        examples=_extract_examples(markdown),
+        examples=examples,
         limitations=limitations,
+        source_behavior=source_behavior,
+        source_sections=source_sections,
+        signature_utterances=_extract_signature_utterances(markdown, examples),
+        conversion_coverage=_conversion_coverage(
+            source_behavior, source_sections, list(behavior_references or {})
+        ),
         quality={"status": "needs_review", "thin_sections": [], "contradictions": [], "compiler_warnings": []},
     )
     thin = []
@@ -480,6 +694,8 @@ class DotSkillAdapter(PersonaImportAdapter):
     def inspect(self, source_path: str | Path) -> ImportInspection:
         with materialize_source(source_path) as root:
             artifacts = locate_artifacts(root)
+            raw_files = {name: path.read_bytes() for name, path in artifacts.items()}
+            digest = content_hash(raw_files)
             legacy_detected = "persona.md" in artifacts and ("manifest.json" in artifacts or "meta.json" in artifacts)
             skill_frontmatter = {}
             skill_detected = False
@@ -487,6 +703,11 @@ class DotSkillAdapter(PersonaImportAdapter):
                 skill_markdown = artifacts["SKILL.md"].read_text(encoding="utf-8")
                 skill_frontmatter = _read_skill_frontmatter(skill_markdown)
                 skill_detected = _is_persona_skill(skill_markdown, skill_frontmatter)
+                behavior_references = locate_behavior_references(
+                    root, artifacts["SKILL.md"], skill_markdown
+                )
+            else:
+                behavior_references = {}
             detected = legacy_detected or skill_detected
             metadata = {}
             warnings = []
@@ -501,8 +722,15 @@ class DotSkillAdapter(PersonaImportAdapter):
             if skill_detected and not legacy_detected:
                 metadata["skillFrontmatter"] = skill_frontmatter
                 warnings.append("检测到标准 SKILL.md 人物，将通过兼容层转换为 PersonaSpec")
-            metadata["files"] = sorted(artifacts)
-            return ImportInspection("dot-skill", detected, str(source_path), metadata, warnings)
+            metadata["files"] = sorted((*artifacts, *behavior_references))
+            if behavior_references:
+                warnings.append(
+                    f"已加载 {len(behavior_references)} 份对话/风格参考文件"
+                )
+            return ImportInspection(
+                "dot-skill", detected, str(source_path), metadata, warnings,
+                artifact_sha256=digest,
+            )
 
     def convert(self, source_path: str | Path) -> ImportResult:
         with materialize_source(source_path) as root:
@@ -518,23 +746,43 @@ class DotSkillAdapter(PersonaImportAdapter):
             inferred_family = None
             if legacy_layout:
                 markdown = raw_files["persona.md"].decode("utf-8")
+                behavior_references = {}
             else:
                 markdown = raw_files["SKILL.md"].decode("utf-8")
                 frontmatter = _read_skill_frontmatter(markdown)
                 if not _is_persona_skill(markdown, frontmatter):
                     raise ValueError("SKILL.md 是工具型 Skill，不包含可转换的人物结构")
                 meta, inferred_family = _skill_meta(markdown, frontmatter)
+                reference_paths = locate_behavior_references(
+                    root, artifacts["SKILL.md"], markdown
+                )
+                behavior_references = {
+                    path: reference.read_text(encoding="utf-8")
+                    for path, reference in reference_paths.items()
+                }
             upstream_schema = str(meta.get("schema_version") or manifest.get("install", {}).get("min_schema_version") or "")
             if upstream_schema not in SUPPORTED_UPSTREAM_SCHEMAS:
                 raise ValueError(f"不支持的 dot-skill schema: {upstream_schema}")
             if inferred_family is None:
                 parent_family = root.parent.name.lower()
                 inferred_family = parent_family if parent_family in {"colleague", "relationship", "celebrity"} else None
-            spec = _normalize_persona(meta, manifest, markdown, digest, inferred_family)
+            spec = _normalize_persona(
+                meta,
+                manifest,
+                markdown,
+                digest,
+                inferred_family,
+                behavior_references,
+            )
             report = PersonaSpecValidator().validate(spec)
             spec.quality["status"] = "valid" if report.valid and not report.issues else "needs_review"
             spec.quality["compiler_warnings"] = [issue.message for issue in report.issues]
-            return ImportResult(spec, report, sorted(raw_files), digest)
+            return ImportResult(
+                spec,
+                report,
+                sorted((*raw_files, *behavior_references)),
+                digest,
+            )
 
 
 def _registry(path: str) -> FilesystemPersonaRegistry:

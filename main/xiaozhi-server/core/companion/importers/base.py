@@ -15,6 +15,7 @@ class ImportInspection:
     source_path: str
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    artifact_sha256: str = ""
 
 
 @dataclass

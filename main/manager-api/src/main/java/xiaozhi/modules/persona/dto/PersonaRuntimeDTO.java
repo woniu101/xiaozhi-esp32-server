@@ -16,4 +16,15 @@ public final class PersonaRuntimeDTO {
         private String version;
         private String knownArtifactHash;
     }
+
+    @Data
+    public static class SignatureAssetRequest {
+        @NotBlank
+        private String agentId;
+        @NotBlank
+        private String personaId;
+        private String version;
+        @NotBlank
+        private String assetId;
+    }
 }

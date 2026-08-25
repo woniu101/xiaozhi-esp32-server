@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .emotion import EmotionEngine
+from .emotion import EmotionEngine, EmotionProfile
 from .relationship import RelationshipEngine
 from .state_models import CompanionEvent, CompanionState
 
@@ -12,10 +12,14 @@ class StateReducer:
         self.emotion = EmotionEngine()
         self.relationship = RelationshipEngine()
 
-    def decay(self, state: CompanionState) -> CompanionState:
+    def decay(
+        self,
+        state: CompanionState,
+        emotion_profile: EmotionProfile | None = None,
+    ) -> CompanionState:
         return replace(
             state,
-            emotion=self.emotion.decay(state.emotion),
+            emotion=self.emotion.decay(state.emotion, profile=emotion_profile),
             relationship=self.relationship.decay(state.relationship),
         )
 
@@ -25,9 +29,10 @@ class StateReducer:
         events: list[CompanionEvent],
         meaningful_turn: bool,
         allowed_stages: list[str] | None = None,
+        emotion_profile: EmotionProfile | None = None,
     ) -> CompanionState:
         return CompanionState(
-            emotion=self.emotion.apply(state.emotion, events),
+            emotion=self.emotion.apply(state.emotion, events, profile=emotion_profile),
             relationship=self.relationship.apply(state.relationship, events, meaningful_turn, allowed_stages),
             revision=state.revision + 1,
         )
@@ -37,10 +42,11 @@ class StateReducer:
         state: CompanionState,
         events: list[CompanionEvent],
         allowed_stages: list[str] | None = None,
+        emotion_profile: EmotionProfile | None = None,
     ) -> CompanionState:
         """Apply current-user signals for response generation without committing a revision."""
         return CompanionState(
-            emotion=self.emotion.apply(state.emotion, events),
+            emotion=self.emotion.apply(state.emotion, events, profile=emotion_profile),
             relationship=self.relationship.apply(state.relationship, events, False, allowed_stages),
             revision=state.revision,
         )

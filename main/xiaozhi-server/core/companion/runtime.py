@@ -43,6 +43,19 @@ def companion_runtime_health() -> dict:
     }
 
 
+def evict_companion_persona(persona_id: str) -> int:
+    """Evict a Persona from all manager-api registries for future sessions."""
+    with _LOCK:
+        managers = list(_MANAGERS.values())
+    evicted = 0
+    for manager in managers:
+        registry = getattr(manager, "persona_registry", None)
+        callback = getattr(registry, "evict", None)
+        if callable(callback):
+            evicted += int(callback(persona_id) or 0)
+    return evicted
+
+
 def _project_path(value: str, default: str) -> Path:
     path = Path(value or default).expanduser()
     if not path.is_absolute():

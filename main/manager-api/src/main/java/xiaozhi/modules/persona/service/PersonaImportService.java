@@ -11,6 +11,16 @@ public interface PersonaImportService {
 
     String createUrl(Long userId, UrlImportRequest request);
 
+    String createUpgradeUpload(Long userId, String personaId, MultipartFile artifact);
+
+    String createUpgradeFromSource(Long userId, String personaId);
+
+    String createRecompile(Long userId, String personaId, String version, boolean inheritSignatureAudio);
+
+    String createRecompileUpload(
+            Long userId, String personaId, String version,
+            boolean inheritSignatureAudio, MultipartFile artifact);
+
     Map<String, Object> getJob(Long userId, String jobId);
 
     void cancel(Long userId, String jobId);

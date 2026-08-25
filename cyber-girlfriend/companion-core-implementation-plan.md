@@ -1,7 +1,7 @@
 # CyberGirlfriend Companion Core 技术基线
 
-> 状态：Implemented Baseline v6.0（P7 待集成/实机验收）
-> 更新日期：2026-08-22
+> 状态：Implemented Baseline v7.1（人物生命周期简化已实现，P7-P8 待集成/实机验收）
+> 更新日期：2026-08-25
 > 用途：指导 Companion Core 后续调试、重构和扩展。产品范围以 `cyber-girlfriend-final-product-plan.md` 为准。
 
 ## 1. 设计目标
@@ -361,10 +361,14 @@ resolve -> download -> inspect -> compile -> validate -> persist draft
 
 管理生命周期：
 
-- draft：可预览、测试、导出；
-- published：可被 Agent Resolve；
-- archived：保留审计和 Diff，但不可重新发布；
-- rollback：把当前 published pointer 切换到目标已发布版本。
+- current：唯一当前使用版本，可被 Agent Resolve；
+- candidate：唯一待应用更新，可预览、测试、重新解析和与 current 比较；
+- previous：唯一可恢复上一版；恢复后与原 current 交换，不保留任意历史版本入口；
+- upgrade：从原 GitHub 来源或新版 ZIP 创建带 `expected_persona_id` 的导入任务；Persona ID 不一致时拒绝持久化，成功后替换旧 candidate；
+- apply：把 candidate 设为 current、原 current 设为 previous，并清理更老制品；
+- delete：输入 Persona ID 确认后自动解除全部 Agent 绑定，永久删除人物版本、导入记录、源码快照、招牌录音、审计、关系状态与记忆，不提供软删除恢复。
+
+底层仍用不可变版本行实现 current/candidate/previous，但原始版本号、compiler hash 和审计仅作为诊断信息，不形成面向用户的制品仓库工作流。
 
 所有 private Persona 操作检查 `owner_user_id`；shared/public 只开放读取和绑定，不开放修改。
 
@@ -376,10 +380,11 @@ PersonaLibrary 页面只承担：
 - 创建 URL/ZIP 导入任务；
 - 轮询三步进度；
 - 展示 Spec/Prompt/Validation/Test/Judge；
-- 发布、回滚、归档和 Diff；
+- 展示当前使用、待应用更新和上一版，并只比较待更新与当前；
+- 应用更新、恢复上一版、导入新版和永久删除人物；
 - 跳转 Agent 绑定。
 
-角色配置页只提交 Persona ID、可选版本、enabled 和白名单 Overlay。声音音色继续使用原有 TTS/Voice Clone 配置字段。
+角色配置页只提交 Persona ID、enabled 和白名单 Overlay。Agent 永远跟随人物 current，不再提供固定历史版本。声音音色继续使用原有 TTS/Voice Clone 配置字段。
 
 ## 13. 关键数据库约束
 
@@ -389,7 +394,7 @@ PersonaLibrary 页面只承担：
 - event 对 `turn_id + event_type + payload_hash` 去重；
 - memory 对 owner/type/normalized hash 去重；
 - turn_id 全局记录防重复提交；
-- 发布指针和 Agent 绑定只允许指向可解析的 published 版本。
+- current/previous 指针只允许指向通过测试的版本；Agent 只绑定 Persona ID，不保存版本指针。
 
 ## 14. 测试门槛
 
@@ -422,10 +427,10 @@ manager-api 需执行 Maven 测试；迁移需在空 MySQL 库应用完整 chang
 
 ## 15. 后续扩展顺序
 
-P7 已完成代码实现。P8 起的完整实现顺序和验收矩阵以
+P7-P8 已完成代码实现。P9 起的完整实现顺序和验收矩阵以
 [`living-presence-next-development-plan.md`](./living-presence-next-development-plan.md) 为准。
 
-1. 情绪引擎 2.0：拆分 UserAffect、CompanionMood 与 TurnExpression；
+1. 关系、记忆与阶段行为：新增持续相处、承诺、修复、久别等事件并让阶段差异落实到行为；
 2. 真实语音回归集、自动评测看板和阈值/Prompt 调优；
 3. 为 Outbox 待提交数量和最老积压时长配置生产告警，并验证服务重启后的真实重放；
 4. 把主动关心状态迁移到持久/分布式调度器，支持服务重启、多实例和离线推送；

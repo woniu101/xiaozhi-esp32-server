@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import shutil
 import stat
 import tempfile
@@ -12,6 +13,14 @@ ALLOWED_FILES = {"manifest.json", "meta.json", "persona.md", "work.md", "SKILL.m
 MAX_FILES = 128
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_BEHAVIOR_REFERENCE_FILES = 8
+MAX_BEHAVIOR_REFERENCE_BYTES = 512 * 1024
+BEHAVIOR_REFERENCE_HINT_RE = re.compile(
+    r"(?:对话|口吻|表达|风格|示例|样本|回归|保真|dialogue|conversation|"
+    r"playbook|fidelity|example|style|voice)",
+    re.I,
+)
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+\.md)(?:#[^)]*)?\)", re.I)
 
 
 class UnsafePersonaSource(ValueError):
@@ -89,3 +98,49 @@ def locate_artifacts(root: Path) -> dict[str, Path]:
                 raise UnsafePersonaSource(f"人物文件超过大小限制: {name}")
             artifacts[name] = candidate
     return artifacts
+
+
+def locate_behavior_references(
+    root: Path, skill_path: Path, markdown: str
+) -> dict[str, Path]:
+    """Find local Markdown files explicitly carrying dialogue/style fidelity.
+
+    Standard Agent Skills often keep the concise activation rules in SKILL.md and
+    move the actual dialogue playbook or accepted regression samples into linked
+    reference files. Those files are part of the character behavior, not generic
+    packaging documentation, so the Persona converter must not silently drop them.
+    """
+    root = root.resolve()
+    skill_dir = skill_path.resolve().parent
+    candidates: list[tuple[str, str]] = []
+    for label, raw_target in MARKDOWN_LINK_RE.findall(markdown):
+        target = raw_target.strip().split("?", 1)[0]
+        if "://" in target or not BEHAVIOR_REFERENCE_HINT_RE.search(
+            f"{label} {target}"
+        ):
+            continue
+        candidates.append((label, target))
+
+    # FIDELITY.md is a conventional repository-level record of accepted behavior
+    # samples. Include it when present even if SKILL.md only mentions it as prose.
+    fidelity = skill_dir / "FIDELITY.md"
+    if fidelity.is_file():
+        candidates.append(("fidelity", "FIDELITY.md"))
+
+    result: dict[str, Path] = {}
+    for _, target in candidates:
+        if len(result) >= MAX_BEHAVIOR_REFERENCE_FILES:
+            break
+        candidate = (skill_dir / target).resolve()
+        if candidate == skill_path.resolve() or candidate.suffix.lower() != ".md":
+            continue
+        if root not in candidate.parents or not candidate.is_file():
+            continue
+        if (
+            candidate.is_symlink()
+            or candidate.stat().st_size > MAX_BEHAVIOR_REFERENCE_BYTES
+        ):
+            continue
+        relative = candidate.relative_to(root).as_posix()
+        result.setdefault(relative, candidate)
+    return result

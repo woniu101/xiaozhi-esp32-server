@@ -91,3 +91,7 @@ class ManagerRepositoryTest(unittest.TestCase):
         self.assertEqual(second[1], first[1])
         resolve_calls = [call for call in client.calls if call[1].endswith("/persona/resolve")]
         self.assertEqual(len(resolve_calls), 1)
+        self.assertEqual(1, registry.evict("persona.test.rabbit"))
+        await registry.load_for_runtime("persona.test.rabbit", None, agent_id="agent-1")
+        resolve_calls = [call for call in client.calls if call[1].endswith("/persona/resolve")]
+        self.assertEqual(len(resolve_calls), 2)

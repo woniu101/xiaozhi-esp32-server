@@ -99,7 +99,8 @@ class CompanionRuntimeServiceImplTest {
         new CompanionRuntimeServiceImpl(dao).commit(request);
 
         verify(dao).forgetMemories(
-                "user-1", "agent-1", "persona-1", "semantic", "preference:咖啡", anyString());
+                eq("user-1"), eq("agent-1"), eq("persona-1"), eq("semantic"),
+                eq("preference:咖啡"), anyString());
         verify(dao, never()).upsertMemory(
                 anyString(), anyString(), anyString(), anyString(), any(), anyString(), anyString(),
                 anyDouble(), anyDouble(), anyString(), any(), any(), anyString());

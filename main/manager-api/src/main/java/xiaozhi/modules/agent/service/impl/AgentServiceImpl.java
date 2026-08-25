@@ -531,16 +531,12 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
                 ? Boolean.TRUE.equals(dto.getCompanionEnabled())
                 : Boolean.TRUE.equals(existingEntity.getCompanionEnabled());
         String effectivePersonaId = dto.getPersonaId() != null ? dto.getPersonaId() : existingEntity.getPersonaId();
-        boolean personaChanged = dto.getPersonaId() != null
-                && !StringUtils.equals(dto.getPersonaId(), existingEntity.getPersonaId());
-        String effectivePersonaVersion = dto.getPersonaVersion() != null
-                ? dto.getPersonaVersion() : personaChanged ? null : existingEntity.getPersonaVersion();
         String effectiveTtsVoiceId = dto.getTtsVoiceId() != null ? dto.getTtsVoiceId() : existingEntity.getTtsVoiceId();
         if (effectiveCompanionEnabled && StringUtils.isBlank(effectivePersonaId)) {
             throw new RenException(ErrorCode.PARAM_VALUE_NULL);
         }
         if (effectiveCompanionEnabled) {
-            personaService.requireBindable(user.getId(), effectivePersonaId, effectivePersonaVersion);
+            personaService.requireBindable(user.getId(), effectivePersonaId, null);
         }
         if (dto.getCompanionOverlay() != null) {
             if (dto.getCompanionOverlay().length() > 10_000) {
@@ -560,11 +556,11 @@ public class AgentServiceImpl extends BaseServiceImpl<AgentDao, AgentEntity> imp
                     agentId,
                     dto.getCompanionEnabled(),
                     dto.getPersonaId(),
-                    personaChanged && dto.getPersonaVersion() == null ? "" : dto.getPersonaVersion(),
+                    "",
                     dto.getCompanionOverlay(),
                     user.getId());
             personaService.recordBindingAudit(
-                    user.getId(), agentId, effectiveCompanionEnabled, effectivePersonaId, effectivePersonaVersion);
+                    user.getId(), agentId, effectiveCompanionEnabled, effectivePersonaId, null);
         }
 
         boolean b = validateLLMIntentParams(existingEntity.getLlmModelId(), existingEntity.getIntentModelId());

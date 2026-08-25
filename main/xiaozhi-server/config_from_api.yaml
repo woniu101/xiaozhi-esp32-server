@@ -48,6 +48,8 @@ companion:
   persona_registry_backend: auto
   init_timeout_ms: 1500
   context_timeout_ms: 500
+  signature_cache_dir: data/companion/signature_assets
+  signature_prefetch_timeout_ms: 2500
   # 可选：OpenAI-compatible Judge LLM。确定性安全规则始终执行，Judge 不可用时不会放宽规则。
   persona_judge:
     enabled: false
@@ -55,3 +57,9 @@ companion:
     api_key: ""
     model: ""
     timeout_seconds: 12
+  persona_semantic_extractor:
+    enabled: false
+    base_url: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 20

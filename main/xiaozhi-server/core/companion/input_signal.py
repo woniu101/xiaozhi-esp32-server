@@ -5,7 +5,7 @@ import json
 import math
 import uuid
 
-from .state_models import CompanionEvent, UserTurnSignal
+from .state_models import CompanionEvent, UserAffect, UserTurnSignal
 
 
 EMOTION_ALIASES = {
@@ -140,4 +140,37 @@ def enrich_text_affect(
         text_confidence=text_weight,
         valence=max(0.0, min(1.0, valence)),
         arousal=max(0.0, min(1.0, arousal)),
+    )
+
+
+def derive_user_affect(signal: UserTurnSignal) -> UserAffect:
+    """Fuse ASR and text observations without turning them into companion mood."""
+    acoustic = signal.acoustic_emotion
+    textual = signal.text_emotion
+    acoustic_confidence = _bounded_number(signal.acoustic_confidence, 0.0)
+    text_confidence = _bounded_number(signal.text_confidence, 0.0)
+    candidates = [
+        (text_confidence, textual),
+        (acoustic_confidence, acoustic),
+    ]
+    confidence, dominant = max(candidates, key=lambda item: item[0])
+    if not dominant or confidence < 0.35:
+        dominant = "NEUTRAL"
+        confidence = max(confidence, 0.0)
+    conflicting = bool(
+        acoustic
+        and textual
+        and acoustic not in {"UNKNOWN", "NEUTRAL"}
+        and textual not in {"UNKNOWN", "NEUTRAL"}
+        and acoustic != textual
+        and min(acoustic_confidence, text_confidence) >= 0.55
+    )
+    return UserAffect(
+        dominant=dominant,
+        confidence=confidence,
+        valence=_bounded_number(signal.valence, 0.5),
+        arousal=_bounded_number(signal.arousal, 0.35),
+        acoustic_emotion=acoustic,
+        text_emotion=textual,
+        conflicting_sources=conflicting,
     )

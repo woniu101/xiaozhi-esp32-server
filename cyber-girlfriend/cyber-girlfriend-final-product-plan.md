@@ -1,7 +1,7 @@
 # CyberGirlfriend 最终成品实施方案
 
-> 状态：Development Baseline v6.0
-> 更新日期：2026-08-20
+> 状态：Development Baseline v7.0
+> 更新日期：2026-08-23
 > 适用仓库：`xiaozhi-esp32-server`
 > 目标：在现有小智服务端上形成可导入人物、持续建立关系、保存长期记忆、使用克隆音色的赛博女友产品闭环。
 
@@ -527,9 +527,18 @@ companion:
 - 普通、工具、错误和在线主动回复均不会再依赖首个 LLM 分片修改 Provider 全局情绪；
 - 实现细节与下一阶段顺序见 `living-presence-next-development-plan.md`。
 
+### P8：情绪引擎 2.0——代码已实现，待集成/实机验收
+
+- 用户单轮情绪 `UserAffect` 与人物跨轮心情 `CompanionMood` 分离；
+- 人物心情具备时间恢复、最短保持和同类事件重复衰减，不会被一句话频繁翻转或刷满；
+- Persona 可通过 Canonical `emotional_logic` 配置反应度、恢复速度、表达度和安全上限；
+- 用户低落触发关心表达，但不会把人物自己的主心情错误复制成低落；
+- 文本和声音共用本轮主表达，但声音强度更克制，负面语气强制限幅；
+- 最近一轮诊断可分别查看用户情绪、人物心情、文本表达和声音表达。
+
 ## 16. 下一步开发顺序
 
-P7-P13 的实现级数据结构、模块改动、验收门槛和测试矩阵见
+P9-P13 的实现级数据结构、模块改动、验收门槛和测试矩阵见
 [`living-presence-next-development-plan.md`](./living-presence-next-development-plan.md)。本节保留产品级顺序，专项文档作为下一阶段开发指导。
 
 1. 在空库和已有 Companion 数据库应用完整 Liquibase changelog，并在具备 Maven 的环境执行 manager-api 单测；

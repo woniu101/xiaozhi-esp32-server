@@ -62,6 +62,10 @@ public class PersonaCompilerClient {
         return post("/internal/companion/health", Map.of());
     }
 
+    public Map<String, Object> evictPersonaCache(String personaId) {
+        return post("/internal/companion/persona/cache/evict", Map.of("personaId", personaId));
+    }
+
     private Map<String, Object> post(String path, Map<String, Object> payload) {
         String secret = sysParamsService.getValue(Constant.SERVER_SECRET, true);
         if (StringUtils.isBlank(secret)) {

@@ -19,8 +19,8 @@ public final class PersonaManagementDTO {
     }
 
     @Data
-    public static class PublishRequest {
-        private String visibility = "private";
+    public static class RecompileRequest {
+        private boolean inheritSignatureAudio = true;
     }
 
     @Data

@@ -108,6 +108,38 @@ test('persona library only resumes active imports and uses a compact card banner
     personaLibrarySource,
     /\.card-visual\s*\{[^}]*height:\s*60px;[^}]*flex:\s*0 0 60px;/s,
   );
+  assert.match(personaLibrarySource, /Api\.persona\.upgradeUpload\(personaId, file/);
+  assert.match(personaLibrarySource, /Api\.persona\.upgradeFromSource\(personaId/);
+  assert.match(personaLibrarySource, /Api\.persona\.usage\(item\.personaId/);
+  assert.match(personaLibrarySource, /inputValidator:\s*value => value === item\.personaId/);
+  assert.match(personaApiSource, /request\('DELETE', `\/persona\/\$\{encoded\(personaId\)\}\?confirmation=/);
+  assert.match(personaApiSource, /\/upgrade\/upload/);
+  assert.match(personaLibrarySource, /openSignatureManager\(scope\.row\)/);
+  assert.match(personaLibrarySource, /signatureVariants:\s*\['classic', 'playful', 'soft'\]/);
+  assert.match(personaLibrarySource, /Api\.persona\.previewSignatureAsset\(asset\.assetId/);
+  assert.match(personaApiSource, /\/signatures\/\$\{encoded\(signatureKey\)\}\/assets\/\$\{encoded\(variant\)\}/);
+  assert.match(personaApiSource, /\/persona\/signature-assets\/\$\{encoded\(assetId\)\}\/play/);
+  assert.match(personaLibrarySource, /openRecompileDialog\(scope\.row\)/);
+  assert.doesNotMatch(
+    personaLibrarySource,
+    /icon="el-icon-refresh"\s*@click="openRecompileDialog\(scope\.row\)"/,
+  );
+  assert.match(personaLibrarySource, /class="version-actions"/);
+  assert.match(personaLibrarySource, /compileResult\.recompileUnchanged/);
+  assert.match(personaLibrarySource, /signatureRuleReadOnly/);
+  assert.match(personaLibrarySource, /signature-editor-assets/);
+  assert.match(personaLibrarySource, /custom-class="signature-editor-dialog"/);
+  assert.match(personaLibrarySource, /\.signature-card\s*\{[\s\S]*grid-template-columns:[^;]*88px;/);
+  assert.match(personaLibrarySource, /\.signature-editor-form \.el-form-item \{ margin-bottom: 10px; \}/);
+  assert.match(personaApiSource, /\/versions\/\$\{encoded\(version\)\}\/recompile/);
+  assert.match(personaApiSource, /\/versions\/\$\{encoded\(version\)\}\/apply/);
+  assert.match(personaApiSource, /\/restore-previous/);
+  assert.doesNotMatch(personaApiSource, /\/purge\?confirmation=/);
+  assert.match(personaApiSource, /\/signatures\/\$\{encoded\(signatureKey\)\}\/enabled/);
+  assert.doesNotMatch(personaLibrarySource, /detail\.devPurgeEnabled/);
+  assert.match(personaLibrarySource, /lifecycleRole === 'candidate'/);
+  assert.match(personaLibrarySource, /toggleSignature\(item\)/);
+  assert.match(personaApiSource, /inheritSignatureAudio/);
 });
 
 test('companion role configuration preserves scoped state and legacy data', () => {
@@ -135,5 +167,7 @@ test('companion role configuration preserves scoped state and legacy data', () =
   assert.match(agentApiSource, /\/companion\/relationship\?confirmAgentId=/);
   assert.match(agentApiSource, /\/companion\/diagnostic/);
   assert.match(roleConfigSource, /openCompanionDiagnostic/);
+  assert.match(roleConfigSource, /personaFollowsCurrent/);
+  assert.doesNotMatch(roleConfigSource, /v-model="form\.personaVersion"/);
   assert.match(agentApiSource, /\/companion\/memories\/\$\{memoryId\}/);
 });

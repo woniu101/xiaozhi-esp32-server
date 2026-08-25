@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,14 +13,38 @@ def iso_now() -> str:
     return utc_now().isoformat()
 
 
+def _known_dataclass_values(model, value: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep persisted state forwards/backwards compatible across rolling upgrades."""
+    if not isinstance(value, dict):
+        return {}
+    known = {item.name for item in fields(model)}
+    return {key: item for key, item in value.items() if key in known}
+
+
 @dataclass
-class EmotionState:
+class CompanionMood:
+    """Persisted cross-turn mood of the companion, never the user's affect."""
+
     valence: float = 0.55
     arousal: float = 0.35
     warmth: float = 0.5
     irritation: float = 0.0
     fatigue: float = 0.1
+    dominant: str = "neutral"
+    intensity: float = 0.0
+    held_until: str | None = None
+    last_event_type: str | None = None
+    last_event_at: str | None = None
+    repeat_count: int = 0
     updated_at: str = field(default_factory=iso_now)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any] | None) -> "CompanionMood":
+        return cls(**_known_dataclass_values(cls, value))
+
+
+# Compatibility name retained for existing extensions, tests and manager payloads.
+EmotionState = CompanionMood
 
 
 @dataclass
@@ -37,7 +61,7 @@ class RelationshipState:
 
 @dataclass
 class CompanionState:
-    emotion: EmotionState = field(default_factory=EmotionState)
+    emotion: CompanionMood = field(default_factory=CompanionMood)
     relationship: RelationshipState = field(default_factory=RelationshipState)
     revision: int = 0
 
@@ -49,8 +73,10 @@ class CompanionState:
         if not value:
             return cls()
         return cls(
-            emotion=EmotionState(**value.get("emotion", {})),
-            relationship=RelationshipState(**value.get("relationship", {})),
+            emotion=CompanionMood.from_dict(value.get("emotion")),
+            relationship=RelationshipState(
+                **_known_dataclass_values(RelationshipState, value.get("relationship"))
+            ),
             revision=int(value.get("revision", 0)),
         )
 
@@ -102,6 +128,30 @@ class UserTurnSignal:
 
 
 @dataclass(frozen=True)
+class UserAffect:
+    """Ephemeral fused affect estimate for the current user turn."""
+
+    dominant: str = "NEUTRAL"
+    confidence: float = 0.0
+    valence: float = 0.5
+    arousal: float = 0.35
+    acoustic_emotion: str | None = None
+    text_emotion: str | None = None
+    conflicting_sources: bool = False
+
+    def to_diagnostic_dict(self) -> dict[str, Any]:
+        return {
+            "dominant": self.dominant,
+            "confidence": round(self.confidence, 3),
+            "valence": round(self.valence, 3),
+            "arousal": round(self.arousal, 3),
+            "acousticEmotion": self.acoustic_emotion,
+            "textEmotion": self.text_emotion,
+            "conflictingSources": self.conflicting_sources,
+        }
+
+
+@dataclass(frozen=True)
 class TurnExpressionPlan:
     """One immutable product-level expression decision for a complete turn."""
 
@@ -115,13 +165,22 @@ class TurnExpressionPlan:
     provider_hint: dict[str, Any] = field(default_factory=lambda: {"style": "neutral"})
     dynamic_emotion_enabled: bool = False
     source: str = "reply"
+    # Appended after legacy fields to preserve positional construction compatibility.
+    text_intensity: float = 0.35
+
+    @property
+    def voice_intensity(self) -> float:
+        """Explicit P8 name while keeping `intensity` compatible with TTS adapters."""
+        return self.intensity
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
             "primary_style": self.primary_style,
             "modifiers": list(self.modifiers),
+            "text_intensity": round(self.text_intensity, 3),
             "intensity": round(self.intensity, 3),
+            "voice_intensity": round(self.voice_intensity, 3),
             "speed": round(self.speed, 3),
             "reason_codes": list(self.reason_codes),
             "device_expression": self.device_expression,

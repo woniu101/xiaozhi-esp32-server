@@ -622,7 +622,7 @@ public class AgentSnapshotServiceImpl extends BaseServiceImpl<AgentSnapshotDao, 
                 agentId,
                 data.getCompanionEnabled(),
                 StringUtils.defaultString(data.getPersonaId()),
-                StringUtils.defaultString(data.getPersonaVersion()),
+                "",
                 StringUtils.defaultIfBlank(data.getCompanionOverlay(), "{}"),
                 userId);
     }

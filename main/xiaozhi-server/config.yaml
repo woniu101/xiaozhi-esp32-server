@@ -252,12 +252,22 @@ companion:
   # Companion 初始化超时后立即回退基础聊天，避免 manager-api 故障阻塞设备上线。
   init_timeout_ms: 1500
   context_timeout_ms: 500
+  # 招牌录音使用可迁移 asset ID；会话启动时下载到本机缓存，失败自动回退当前 TTS。
+  signature_cache_dir: data/companion/signature_assets
+  signature_prefetch_timeout_ms: 2500
   persona_judge:
     enabled: false
     base_url: ""
     api_key: ""
     model: ""
     timeout_seconds: 12
+  # 可选：仅为非标准 Skill 建立带原文证据的结构化索引；原 Skill 始终保留为真相源。
+  persona_semantic_extractor:
+    enabled: false
+    base_url: ""
+    api_key: ""
+    model: ""
+    timeout_seconds: 20
 
 # 系统错误时的回复
 system_error_response: "主人，小智现在有点忙，我们稍后再试吧。"

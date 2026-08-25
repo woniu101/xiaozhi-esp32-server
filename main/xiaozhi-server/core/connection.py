@@ -62,6 +62,11 @@ from core.companion.observability import metrics
 from core.companion.event_extractor import RuleBasedEventExtractor, LLMStructuredMemoryExtractor
 from core.companion.proactive import proactive_decision, proactive_registry
 from core.companion.proactive_playback import enqueue_online_proactive_playback
+from core.companion.signature_audio import (
+    SignatureSpeechRouter,
+    enqueue_speech_segments,
+    prefetch_signature_assets,
+)
 
 
 TAG = __name__
@@ -1058,12 +1063,25 @@ class ConnectionHandler:
             self.companion_proactive_key = "|".join(
                 (identity.user_id, identity.agent_id, identity.persona_id)
             )
+            signature_count = 0
+            try:
+                signature_timeout_ms = int(
+                    companion_config.get("signature_prefetch_timeout_ms", 2500)
+                )
+                signature_count = await asyncio.wait_for(
+                    prefetch_signature_assets(self.companion_session, self.config),
+                    timeout=max(0.1, signature_timeout_ms / 1000),
+                )
+            except Exception as error:
+                self.logger.bind(tag=TAG).warning(
+                    f"招牌语音预取失败，已回退当前 TTS: {error}"
+                )
             metrics.increment(
                 "companion_session_open_total",
                 restored=str(self.companion_session.state.revision > 0).lower(),
             )
             self.logger.bind(tag=TAG).info(
-                f"Companion 初始化成功: persona={persona_id}, version={self.companion_session.identity.persona_version}"
+                f"Companion 初始化成功: persona={persona_id}, version={self.companion_session.identity.persona_version}, signature_assets={signature_count}"
             )
         except Exception as e:
             self.companion_manager = None
@@ -1502,6 +1520,9 @@ class ConnectionHandler:
         expression_turn_id = expression_plan.turn_id or getattr(
             turn_recorder, "turn_id", None
         )
+        signature_router = SignatureSpeechRouter.from_session(
+            self.companion_session, expression_payload
+        )
 
         # 设置最大递归深度，避免无限循环，可根据实际需求调整
         MAX_DEPTH = 5
@@ -1634,15 +1655,13 @@ class ConnectionHandler:
                                         tc["_da_sent"] = safe_end
                                         if turn_recorder is not None:
                                             turn_recorder.append_assistant_chunk(new_part)
-                                        self.tts.tts_text_queue.put(
-                                            TTSMessageDTO(
-                                                sentence_id=current_sentence_id,
-                                                sentence_type=SentenceType.MIDDLE,
-                                                content_type=ContentType.TEXT,
-                                                content_detail=new_part,
-                                                expression_plan=expression_payload,
-                                                turn_id=expression_turn_id,
-                                            )
+                                        enqueue_speech_segments(
+                                            self.tts,
+                                            signature_router,
+                                            new_part,
+                                            sentence_id=current_sentence_id,
+                                            expression_plan=expression_payload,
+                                            turn_id=expression_turn_id,
                                         )
                                         if tracker is not None:
                                             tracker.mark("tts_text_enqueued")
@@ -1666,15 +1685,13 @@ class ConnectionHandler:
                         response_message.append(content)
                         if turn_recorder is not None:
                             turn_recorder.append_assistant_chunk(content)
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.MIDDLE,
-                                content_type=ContentType.TEXT,
-                                content_detail=content,
-                                expression_plan=expression_payload,
-                                turn_id=expression_turn_id,
-                            )
+                        enqueue_speech_segments(
+                            self.tts,
+                            signature_router,
+                            content,
+                            sentence_id=current_sentence_id,
+                            expression_plan=expression_payload,
+                            turn_id=expression_turn_id,
                         )
                         if tracker is not None:
                             tracker.mark("tts_text_enqueued")
@@ -1682,6 +1699,15 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
             if turn_recorder is not None:
                 turn_recorder.mark_failed(str(e))
+            enqueue_speech_segments(
+                self.tts,
+                signature_router,
+                "",
+                sentence_id=current_sentence_id,
+                expression_plan=expression_payload,
+                turn_id=expression_turn_id,
+                final=True,
+            )
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
                     sentence_id=current_sentence_id,
@@ -1758,15 +1784,13 @@ class ConnectionHandler:
                                 if remaining:
                                     if turn_recorder is not None:
                                         turn_recorder.append_assistant_chunk(remaining)
-                                    self.tts.tts_text_queue.put(
-                                        TTSMessageDTO(
-                                            sentence_id=current_sentence_id,
-                                            sentence_type=SentenceType.MIDDLE,
-                                            content_type=ContentType.TEXT,
-                                            content_detail=remaining,
-                                            expression_plan=expression_payload,
-                                            turn_id=expression_turn_id,
-                                        )
+                                    enqueue_speech_segments(
+                                        self.tts,
+                                        signature_router,
+                                        remaining,
+                                        sentence_id=current_sentence_id,
+                                        expression_plan=expression_payload,
+                                        turn_id=expression_turn_id,
                                     )
                                     tracker = self.companion_turn_latency.get(current_sentence_id)
                                     if tracker is not None:
@@ -1777,6 +1801,15 @@ class ConnectionHandler:
                             self.dialogue.put(Message(role="assistant", content=da_response))
 
                     if not real_tool_calls:
+                        enqueue_speech_segments(
+                            self.tts,
+                            signature_router,
+                            "",
+                            sentence_id=current_sentence_id,
+                            expression_plan=expression_payload,
+                            turn_id=expression_turn_id,
+                            final=True,
+                        )
                         if depth == 0:
                             self.tts.tts_text_queue.put(
                                 TTSMessageDTO(
@@ -1793,6 +1826,15 @@ class ConnectionHandler:
                     tool_calls_list = real_tool_calls
 
             if not bHasError and len(tool_calls_list) > 0:
+                enqueue_speech_segments(
+                    self.tts,
+                    signature_router,
+                    "",
+                    sentence_id=current_sentence_id,
+                    expression_plan=expression_payload,
+                    turn_id=expression_turn_id,
+                    final=True,
+                )
                 self.logger.bind(tag=TAG).debug(
                     f"检测到 {len(tool_calls_list)} 个工具调用"
                 )
@@ -1874,6 +1916,16 @@ class ConnectionHandler:
             text_buff = "".join(response_message)
             self.tts.store_tts_text(current_sentence_id, text_buff)
             self.dialogue.put(Message(role="assistant", content=text_buff))
+
+        enqueue_speech_segments(
+            self.tts,
+            signature_router,
+            "",
+            sentence_id=current_sentence_id,
+            expression_plan=expression_payload,
+            turn_id=expression_turn_id,
+            final=True,
+        )
 
         if depth == 0:
             if self.client_abort and turn_recorder is not None:

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -61,6 +62,12 @@ class JsonUtilsTest {
         assertNull(JsonUtils.toStringObjectMap(null));
         assertNull(JsonUtils.toStringObjectMapList(null));
         assertNull(JsonUtils.toList(null, String.class));
+    }
+
+    @Test
+    void serializesJavaTimeValuesAsIsoText() {
+        assertEquals("\"2026-08-25T14:52:22\"",
+                JsonUtils.toJsonString(LocalDateTime.of(2026, 8, 25, 14, 52, 22)));
     }
 
     @Test

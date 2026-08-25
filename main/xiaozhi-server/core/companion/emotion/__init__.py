@@ -1,3 +1,3 @@
-from .engine import EmotionEngine
+from .engine import EmotionEngine, EmotionProfile
 
-__all__ = ["EmotionEngine"]
+__all__ = ["EmotionEngine", "EmotionProfile"]

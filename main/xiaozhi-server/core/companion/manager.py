@@ -9,7 +9,12 @@ from time import perf_counter
 
 from core.companion.context_builder import CompanionContextBuilder
 from core.companion.event_extractor import RuleBasedEventExtractor
-from core.companion.input_signal import enrich_text_affect, parse_user_turn_signal
+from core.companion.emotion import EmotionProfile
+from core.companion.input_signal import (
+    derive_user_affect,
+    enrich_text_affect,
+    parse_user_turn_signal,
+)
 from core.companion.observability import metrics
 from core.companion.overlay import effective_overlay
 from core.companion.repositories.base import CompanionRepository
@@ -86,7 +91,8 @@ class CompanionManager:
                     )
                 except Exception:
                     metrics.increment("companion_outbox_state_refresh_failed_total")
-            session.state = self.reducer.decay(session.state)
+            emotion_profile = EmotionProfile.from_persona(session.persona_spec)
+            session.state = self.reducer.decay(session.state, emotion_profile)
             signal = parse_user_turn_signal(
                 user_message,
                 turn_id=turn_id,
@@ -94,8 +100,14 @@ class CompanionManager:
             )
             events = self.extractor.extract_pre_turn(signal)
             signal = enrich_text_affect(signal, events)
+            user_affect = derive_user_affect(signal)
             allowed = session.overlay.get("allowed_stages") or session.persona_spec.relationship_policy.get("allowed_stages")
-            preview_state = self.reducer.preview(session.state, events, allowed)
+            preview_state = self.reducer.preview(
+                session.state,
+                events,
+                allowed,
+                emotion_profile,
+            )
             if track_turn:
                 session.turn_preview_state = preview_state
                 session.turn_preview_events = events
@@ -108,6 +120,7 @@ class CompanionManager:
                 turn_id=turn_id,
                 track_turn=track_turn,
                 user_turn_signal=signal,
+                user_affect=user_affect,
             )
             if track_turn:
                 session.pending_turn_diagnostics[turn_id or "__latest__"] = {
@@ -120,6 +133,8 @@ class CompanionManager:
                     "recalledMemoryIds": context.metadata.get("recalled_memory_ids", []),
                     "selectedExampleIds": context.metadata.get("selected_example_ids", []),
                     "userTurnSignal": signal.to_diagnostic_dict(),
+                    "userAffect": user_affect.to_diagnostic_dict(),
+                    "emotionProfile": emotion_profile.to_dict(),
                     "contextBuildMs": round((perf_counter() - started) * 1000, 3),
                 }
             return context
@@ -159,9 +174,16 @@ class CompanionManager:
             events = self._deduplicate_events([*pre_turn_events, *events])
         allowed = session.overlay.get("allowed_stages") or session.persona_spec.relationship_policy.get("allowed_stages")
         meaningful = is_meaningful_turn(turn, events)
+        emotion_profile = EmotionProfile.from_persona(session.persona_spec)
         for _ in range(3):
             expected_revision = session.state.revision
-            new_state = self.reducer.reduce(session.state, events, meaningful, allowed)
+            new_state = self.reducer.reduce(
+                session.state,
+                events,
+                meaningful,
+                allowed,
+                emotion_profile,
+            )
             commit_diagnostic = {
                 **diagnostic,
                 **(turn.diagnostic if isinstance(turn.diagnostic, dict) else {}),

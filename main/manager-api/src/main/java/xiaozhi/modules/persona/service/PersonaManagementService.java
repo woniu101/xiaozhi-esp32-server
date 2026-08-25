@@ -14,11 +14,13 @@ public interface PersonaManagementService {
 
     Map<String, Object> diff(Long userId, String personaId, String from, String to);
 
-    void publish(Long userId, String personaId, String version, String visibility);
+    Map<String, Object> usage(Long userId, String personaId);
 
-    void rollback(Long userId, String personaId, String version);
+    void delete(Long userId, String personaId, String confirmation);
 
-    void archive(Long userId, String personaId, String version);
+    void applyUpdate(Long userId, String personaId, String version);
+
+    void restorePrevious(Long userId, String personaId);
 
     Map<String, Object> rerunTest(
             Long userId, String personaId, String version,

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from config.manage_api_client import ManageApiClient
+from core.companion.emotion import EmotionProfile
 from core.companion.observability import metrics
 from core.companion.repositories.base import CompanionRepository
 from core.companion.repositories.commit_outbox import DurableCommitOutbox
@@ -204,11 +205,15 @@ class ManagerApiCompanionRepository(CompanionRepository):
         diagnostic = payload.get("diagnostic") if isinstance(payload.get("diagnostic"), dict) else {}
         allowed = diagnostic.get("allowedStages")
         allowed_stages = allowed if isinstance(allowed, list) else None
+        emotion_profile = EmotionProfile.from_persona(
+            diagnostic.get("emotionProfile")
+        )
         rebased = self.reducer.reduce(
             remote,
             events,
             bool(diagnostic.get("meaningfulTurn", False)),
             allowed_stages,
+            emotion_profile,
         )
         value = dict(payload)
         value["expectedRevision"] = remote.revision

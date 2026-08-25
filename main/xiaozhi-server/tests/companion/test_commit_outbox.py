@@ -110,6 +110,7 @@ class CommitOutboxTest(unittest.TestCase):
         rebased = client.commit_payloads[-1]
         self.assertEqual(rebased["expectedRevision"], 5)
         self.assertEqual(rebased["state"]["revision"], 6)
+        self.assertAlmostEqual(rebased["state"]["emotion"]["warmth"], 0.516, places=3)
         self.assertTrue(rebased["diagnostic"]["outboxRebased"])
 
     def _payload(self, turn_id):
@@ -128,6 +129,7 @@ class CommitOutboxTest(unittest.TestCase):
             "diagnostic": {
                 "meaningfulTurn": True,
                 "allowedStages": ["familiar", "friend"],
+                "emotionProfile": {"reactivity": 0.4},
             },
         }
 

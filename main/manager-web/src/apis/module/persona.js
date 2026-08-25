@@ -66,20 +66,42 @@ export default {
     form.append('file', file)
     request('POST', '/persona/import/upload', form, callback, onFailure, {})
   },
+  upgradeFromSource(personaId, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/upgrade/source`, {}, callback, onFailure)
+  },
+  upgradeUpload(personaId, file, callback, onFailure) {
+    const form = new FormData()
+    form.append('file', file)
+    request('POST', `/persona/${encoded(personaId)}/upgrade/upload`, form, callback, onFailure, {})
+  },
+  recompile(personaId, version, inheritSignatureAudio, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/recompile`,
+      { inheritSignatureAudio: inheritSignatureAudio !== false }, callback, onFailure)
+  },
+  recompileUpload(personaId, version, inheritSignatureAudio, file, callback, onFailure) {
+    const form = new FormData()
+    form.append('inheritSignatureAudio', inheritSignatureAudio !== false ? 'true' : 'false')
+    form.append('file', file)
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/recompile/upload`,
+      form, callback, onFailure, {})
+  },
   importJob(jobId, callback, onFailure) {
     request('GET', `/persona/import/jobs/${encoded(jobId)}`, undefined, callback, onFailure)
   },
   cancelImport(jobId, callback, onFailure) {
     request('POST', `/persona/import/jobs/${encoded(jobId)}/cancel`, {}, callback, onFailure)
   },
-  publish(personaId, version, visibility, callback, onFailure) {
-    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/publish`, { visibility }, callback, onFailure)
+  applyUpdate(personaId, version, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/apply`, {}, callback, onFailure)
   },
-  rollback(personaId, version, callback, onFailure) {
-    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/rollback`, {}, callback, onFailure)
+  restorePrevious(personaId, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/restore-previous`, {}, callback, onFailure)
   },
-  archive(personaId, version, callback, onFailure) {
-    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/archive`, {}, callback, onFailure)
+  usage(personaId, callback, onFailure) {
+    request('GET', `/persona/${encoded(personaId)}/usage`, undefined, callback, onFailure)
+  },
+  remove(personaId, confirmation, callback, onFailure) {
+    request('DELETE', `/persona/${encoded(personaId)}?confirmation=${encoded(confirmation)}`, undefined, callback, onFailure)
   },
   rerunTest(personaId, version, conversationSamples, callback, onFailure) {
     request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/test`, { conversationSamples: conversationSamples || [] }, callback, onFailure)
@@ -87,7 +109,31 @@ export default {
   testRuns(personaId, version, callback, onFailure) {
     request('GET', `/persona/${encoded(personaId)}/versions/${encoded(version)}/tests`, undefined, callback, onFailure)
   },
-  audit(personaId, callback, onFailure) {
-    request('GET', `/persona/${encoded(personaId)}/audit`, undefined, callback, onFailure)
+  signatures(personaId, version, callback, onFailure) {
+    request('GET', `/persona/${encoded(personaId)}/versions/${encoded(version)}/signatures`, undefined, callback, onFailure)
+  },
+  saveSignature(personaId, version, signatureKey, data, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/signatures/${encoded(signatureKey)}`, data, callback, onFailure)
+  },
+  setSignatureEnabled(personaId, version, signatureKey, enabled, callback, onFailure) {
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/signatures/${encoded(signatureKey)}/enabled`, { enabled }, callback, onFailure)
+  },
+  uploadSignatureAsset(personaId, version, signatureKey, variant, file, callback, onFailure) {
+    const form = new FormData()
+    form.append('file', file)
+    request('POST', `/persona/${encoded(personaId)}/versions/${encoded(version)}/signatures/${encoded(signatureKey)}/assets/${encoded(variant)}`, form, callback, onFailure, {})
+  },
+  deleteSignatureAsset(assetId, callback, onFailure) {
+    request('DELETE', `/persona/signature-assets/${encoded(assetId)}`, undefined, callback, onFailure)
+  },
+  previewSignatureAsset(assetId, callback, onFailure) {
+    RequestService.sendRequest()
+      .url(`${getServiceUrl()}/persona/signature-assets/${encoded(assetId)}/play`)
+      .method('GET')
+      .type('blob')
+      .success(callback)
+      .fail(onFailure)
+      .networkFail(onFailure)
+      .send()
   }
 }

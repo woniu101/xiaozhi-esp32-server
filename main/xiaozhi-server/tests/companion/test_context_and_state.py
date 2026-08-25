@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from core.companion.emotion import EmotionEngine
+from core.companion.emotion import EmotionEngine, EmotionProfile
 from core.companion.models import PersonaSpec
 from core.companion.event_extractor import LLMStructuredMemoryExtractor, RuleBasedEventExtractor
 from core.companion.manager import is_meaningful_turn
@@ -357,6 +357,121 @@ class StateEngineTest(unittest.TestCase):
         for name in ("valence", "arousal", "warmth", "irritation", "fatigue"):
             self.assertGreaterEqual(getattr(changed, name), 0.0)
             self.assertLessEqual(getattr(changed, name), 1.0)
+
+    def test_user_distress_creates_caring_stance_without_copying_sadness(self):
+        engine = EmotionEngine()
+        state = EmotionState()
+
+        changed = engine.apply(
+            state,
+            [CompanionEvent("user_expressed_distress", 0.9)],
+        )
+
+        self.assertGreater(changed.warmth, state.warmth)
+        self.assertNotEqual("low", changed.dominant)
+        self.assertGreater(changed.valence, 0.5)
+
+    def test_repeated_same_event_has_diminishing_increment(self):
+        engine = EmotionEngine()
+        now = datetime.now(timezone.utc)
+        first = engine.apply(
+            EmotionState(),
+            [CompanionEvent("user_insulted_companion", 1.0)],
+            now=now,
+        )
+        second = engine.apply(
+            first,
+            [CompanionEvent("user_insulted_companion", 1.0)],
+            now=now + timedelta(seconds=5),
+        )
+
+        first_increment = first.irritation
+        second_increment = second.irritation - first.irritation
+        self.assertGreater(first_increment, second_increment)
+        self.assertEqual(2, second.repeat_count)
+
+    def test_minimum_hold_prevents_weak_mood_flip(self):
+        engine = EmotionEngine()
+        now = datetime.now(timezone.utc)
+        warm = EmotionState(
+            warmth=0.8,
+            dominant="warm",
+            intensity=0.8,
+            held_until=(now + timedelta(seconds=90)).isoformat(),
+            updated_at=now.isoformat(),
+        )
+
+        changed = engine.apply(
+            warm,
+            [CompanionEvent("user_expressed_joy", 0.6)],
+            now=now + timedelta(seconds=5),
+        )
+
+        self.assertEqual("warm", changed.dominant)
+
+    def test_strong_boundary_event_can_interrupt_positive_hold(self):
+        engine = EmotionEngine()
+        now = datetime.now(timezone.utc)
+        joyful = EmotionState(
+            valence=0.75,
+            arousal=0.65,
+            dominant="joyful",
+            intensity=0.7,
+            held_until=(now + timedelta(seconds=90)).isoformat(),
+            updated_at=now.isoformat(),
+        )
+
+        changed = engine.apply(
+            joyful,
+            [CompanionEvent("user_insulted_companion", 0.85)],
+            now=now + timedelta(seconds=5),
+        )
+
+        self.assertEqual("annoyed", changed.dominant)
+
+    def test_persona_recovery_rate_changes_return_to_baseline(self):
+        engine = EmotionEngine()
+        now = datetime.now(timezone.utc)
+        old = EmotionState(
+            irritation=0.6,
+            dominant="annoyed",
+            intensity=0.6,
+            updated_at=(now - timedelta(hours=4)).isoformat(),
+        )
+
+        slow = engine.decay(old, now=now, profile=EmotionProfile(recovery_rate=0.5))
+        fast = engine.decay(old, now=now, profile=EmotionProfile(recovery_rate=2.0))
+
+        self.assertLess(fast.irritation, slow.irritation)
+
+    def test_emotion_profile_values_are_safely_bounded(self):
+        profile = EmotionProfile.from_persona(
+            {
+                "reactivity": 99,
+                "recovery_rate": -1,
+                "expressiveness": "bad",
+                "negative_voice_cap": 2,
+            }
+        )
+
+        self.assertEqual(1.6, profile.reactivity)
+        self.assertEqual(0.4, profile.recovery_rate)
+        self.assertEqual(1.0, profile.expressiveness)
+        self.assertEqual(0.75, profile.negative_voice_cap)
+
+    def test_old_emotion_json_remains_compatible_and_unknown_fields_are_ignored(self):
+        state = CompanionState.from_dict(
+            {
+                "emotion": {"valence": 0.7, "future_field": "ignored"},
+                "relationship": {"stage": "friend", "future_field": "ignored"},
+                "revision": 3,
+            }
+        )
+
+        self.assertEqual(0.7, state.emotion.valence)
+        self.assertEqual("neutral", state.emotion.dominant)
+        self.assertEqual("friend", state.relationship.stage)
+        self.assertEqual(3, state.revision)
 
     def test_relationship_requires_all_stage_thresholds(self):
         engine = RelationshipEngine()

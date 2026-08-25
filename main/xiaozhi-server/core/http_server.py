@@ -93,6 +93,10 @@ class SimpleHttpServer:
                             self.persona_handler.handle_info,
                         ),
                         web.post(
+                            "/internal/companion/persona/cache/evict",
+                            self.persona_handler.handle_cache_evict,
+                        ),
+                        web.post(
                             "/internal/companion/health",
                             self.persona_handler.handle_health,
                         ),

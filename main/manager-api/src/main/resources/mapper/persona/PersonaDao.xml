@@ -16,22 +16,8 @@
         WHERE ap.agent_id = #{agentId}
           AND ap.enabled = 1
           AND ap.persona_source_id = #{personaId}
-          AND s.archived = 0
           AND v.status = 'published'
-          AND (
-              (#{version} IS NOT NULL AND #{version} != '' AND v.version = #{version})
-              OR
-              ((#{version} IS NULL OR #{version} = '') AND ap.published_version IS NOT NULL
-                  AND ap.published_version != '' AND v.version = ap.published_version)
-              OR
-              ((#{version} IS NULL OR #{version} = '')
-                  AND (ap.published_version IS NULL OR ap.published_version = '')
-                  AND (s.latest_published_version IS NULL OR s.latest_published_version = ''
-                       OR v.version = s.latest_published_version))
-          )
-        ORDER BY CASE WHEN v.version = s.latest_published_version THEN 0 ELSE 1 END,
-                 v.published_at DESC,
-                 v.created_at DESC
+          AND v.version = s.latest_published_version
         LIMIT 1
     </select>
 
@@ -40,10 +26,9 @@
         FROM ai_persona_source s
         JOIN ai_persona_version v ON v.persona_source_id = s.id
         WHERE s.id = #{personaId}
-          AND s.archived = 0
           AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
           AND v.status = 'published'
-          AND (#{version} IS NULL OR #{version} = '' OR v.version = #{version})
+          AND v.version = s.latest_published_version
     </select>
 
     <select id="selectBindableOptions" resultType="java.util.LinkedHashMap">
@@ -56,22 +41,37 @@
                s.relationship_ceiling AS relationshipCeiling,
                s.visibility
         FROM ai_persona_source s
-        WHERE s.archived = 0
-          AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+        WHERE (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
           AND EXISTS (
               SELECT 1 FROM ai_persona_version v
-              WHERE v.persona_source_id = s.id AND v.status = 'published'
+              WHERE v.persona_source_id = s.id
+                AND v.status = 'published'
+                AND v.version = s.latest_published_version
           )
         ORDER BY s.updated_at DESC, s.display_name ASC
     </select>
 
     <insert id="insertImportJob">
         INSERT INTO ai_persona_import_job(
-            id, owner_user_id, source_type, source_url, source_ref,
+            id, owner_user_id, expected_persona_id, source_type, source_url, source_ref,
             artifact_path, status, progress, created_at, updated_at, expires_at
         ) VALUES (
-            #{id}, #{ownerUserId}, #{sourceType}, #{sourceUrl}, #{sourceRef},
+            #{id}, #{ownerUserId}, #{expectedPersonaId}, #{sourceType}, #{sourceUrl}, #{sourceRef},
             #{artifactPath}, #{status}, 0, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY)
+        )
+    </insert>
+
+    <insert id="insertRecompileJob">
+        INSERT INTO ai_persona_import_job(
+            id, owner_user_id, expected_persona_id, base_version,
+            force_revision, inherit_signature_audio,
+            source_type, source_url, source_ref, artifact_path,
+            status, progress, created_at, updated_at, expires_at
+        ) VALUES (
+            #{id}, #{ownerUserId}, #{expectedPersonaId}, #{baseVersion},
+            1, #{inheritSignatureAudio},
+            #{sourceType}, #{sourceUrl}, #{sourceRef}, #{artifactPath},
+            #{status}, 0, NOW(), NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY)
         )
     </insert>
 
@@ -100,6 +100,10 @@
     <select id="selectImportJob" resultType="java.util.LinkedHashMap">
         SELECT id,
                owner_user_id AS ownerUserId,
+               expected_persona_id AS expectedPersonaId,
+               base_version AS baseVersion,
+               force_revision AS forceRevision,
+               inherit_signature_audio AS inheritSignatureAudio,
                source_type AS sourceType,
                source_url AS sourceUrl,
                source_ref AS sourceRef,
@@ -121,6 +125,10 @@
     <select id="selectImportJobForUpdate" resultType="java.util.LinkedHashMap">
         SELECT id,
                owner_user_id AS ownerUserId,
+               expected_persona_id AS expectedPersonaId,
+               base_version AS baseVersion,
+               force_revision AS forceRevision,
+               inherit_signature_audio AS inheritSignatureAudio,
                source_type AS sourceType,
                source_url AS sourceUrl,
                source_ref AS sourceRef,
@@ -171,55 +179,242 @@
         LIMIT 1
     </select>
 
+    <select id="countPersonaBindings" resultType="int">
+        SELECT COUNT(*)
+        FROM ai_agent_persona
+        WHERE persona_source_id = #{personaId}
+    </select>
+
+    <select id="selectOwnedPersonaBindings" resultType="java.util.LinkedHashMap">
+        SELECT ap.agent_id AS agentId,
+               a.agent_name AS agentName,
+               ap.enabled
+        FROM ai_agent_persona ap
+        JOIN ai_agent a ON a.id = ap.agent_id
+        WHERE ap.persona_source_id = #{personaId}
+          AND a.user_id = #{userId}
+        ORDER BY a.updated_at DESC, a.agent_name ASC
+    </select>
+
+    <select id="selectPersonaArtifactPaths" resultType="java.lang.String">
+        SELECT artifactPath
+        FROM (
+            SELECT s.raw_artifact_path AS artifactPath
+            FROM ai_persona_source s
+            WHERE s.id = #{personaId} AND s.owner_user_id = #{userId}
+            UNION
+            SELECT v.source_artifact_path AS artifactPath
+            FROM ai_persona_version v
+            JOIN ai_persona_source s ON s.id = v.persona_source_id
+            WHERE v.persona_source_id = #{personaId} AND s.owner_user_id = #{userId}
+            UNION
+            SELECT j.artifact_path AS artifactPath
+            FROM ai_persona_import_job j
+            WHERE j.owner_user_id = #{userId}
+              AND (
+                  j.expected_persona_id = #{personaId}
+                  OR JSON_UNQUOTE(JSON_EXTRACT(j.compile_result_json, '$.personaId')) = #{personaId}
+              )
+        ) paths
+        WHERE artifactPath IS NOT NULL AND artifactPath != ''
+    </select>
+
+    <update id="clearPersonaBindings">
+        UPDATE ai_agent_persona
+        SET persona_source_id = NULL,
+            published_version = NULL,
+            enabled = 0,
+            companion_overlay_json = NULL,
+            updated_at = NOW()
+        WHERE persona_source_id = #{personaId}
+    </update>
+
+    <delete id="deletePersonaMemories">
+        DELETE FROM ai_companion_memory WHERE persona_id = #{personaId}
+    </delete>
+
+    <delete id="deletePersonaEvents">
+        DELETE FROM ai_companion_event WHERE persona_id = #{personaId}
+    </delete>
+
+    <delete id="deletePersonaTurns">
+        DELETE FROM ai_companion_turn WHERE persona_id = #{personaId}
+    </delete>
+
+    <delete id="deletePersonaStates">
+        DELETE FROM ai_companion_state WHERE persona_id = #{personaId}
+    </delete>
+
+    <delete id="deletePersonaImportJobs">
+        DELETE FROM ai_persona_import_job
+        WHERE owner_user_id = #{userId}
+          AND (
+              expected_persona_id = #{personaId}
+              OR JSON_UNQUOTE(JSON_EXTRACT(compile_result_json, '$.personaId')) = #{personaId}
+          )
+    </delete>
+
+    <delete id="deletePersonaAudit">
+        DELETE FROM ai_companion_audit
+        WHERE operator_user_id = #{userId}
+          AND (
+              target_id = #{personaId}
+              OR target_id LIKE CONCAT(#{personaId}, '@%')
+              OR target_id LIKE CONCAT(#{personaId}, '#%')
+              OR JSON_SEARCH(details_json, 'one', #{personaId}) IS NOT NULL
+          )
+    </delete>
+
+    <delete id="hardDeletePersonaSource">
+        DELETE FROM ai_persona_source
+        WHERE id = #{personaId} AND owner_user_id = #{userId}
+    </delete>
+
+    <select id="selectLifecycleVersions" resultType="java.util.LinkedHashMap">
+        SELECT s.latest_published_version AS currentVersion,
+               s.previous_published_version AS previousVersion,
+               (
+                   SELECT v.version
+                   FROM ai_persona_version v
+                   WHERE v.persona_source_id = s.id AND v.status = 'draft'
+                   ORDER BY v.created_at DESC, v.id DESC
+                   LIMIT 1
+               ) AS draftVersion
+        FROM ai_persona_source s
+        WHERE s.id = #{personaId}
+        LIMIT 1
+    </select>
+
+    <delete id="deleteSignatureAssetsOutsideLifecycle">
+        DELETE FROM ai_persona_signature_asset
+        WHERE persona_source_id = #{personaId}
+        <choose>
+            <when test="retainedVersions != null and retainedVersions.size() > 0">
+                AND persona_version NOT IN
+                <foreach collection="retainedVersions" item="version" open="(" separator="," close=")">
+                    #{version}
+                </foreach>
+            </when>
+            <otherwise>AND 1 = 0</otherwise>
+        </choose>
+    </delete>
+
+    <delete id="deleteSignatureOverridesOutsideLifecycle">
+        DELETE FROM ai_persona_signature_override
+        WHERE persona_source_id = #{personaId}
+        <choose>
+            <when test="retainedVersions != null and retainedVersions.size() > 0">
+                AND persona_version NOT IN
+                <foreach collection="retainedVersions" item="version" open="(" separator="," close=")">
+                    #{version}
+                </foreach>
+            </when>
+            <otherwise>AND 1 = 0</otherwise>
+        </choose>
+    </delete>
+
+    <delete id="deleteTestRunsOutsideLifecycle">
+        DELETE FROM ai_persona_test_run
+        WHERE persona_source_id = #{personaId}
+        <choose>
+            <when test="retainedVersions != null and retainedVersions.size() > 0">
+                AND version NOT IN
+                <foreach collection="retainedVersions" item="version" open="(" separator="," close=")">
+                    #{version}
+                </foreach>
+            </when>
+            <otherwise>AND 1 = 0</otherwise>
+        </choose>
+    </delete>
+
+    <delete id="deleteVersionsOutsideLifecycle">
+        DELETE FROM ai_persona_version
+        WHERE persona_source_id = #{personaId}
+        <choose>
+            <when test="retainedVersions != null and retainedVersions.size() > 0">
+                AND version NOT IN
+                <foreach collection="retainedVersions" item="version" open="(" separator="," close=")">
+                    #{version}
+                </foreach>
+            </when>
+            <otherwise>AND 1 = 0</otherwise>
+        </choose>
+    </delete>
+
+    <update id="clearPinnedPersonaVersions">
+        UPDATE ai_agent_persona
+        SET published_version = NULL, updated_at = NOW()
+        WHERE persona_source_id = #{personaId} AND published_version IS NOT NULL
+    </update>
+
     <insert id="upsertPersonaSource" parameterType="map">
         INSERT INTO ai_persona_source(
             id, owner_user_id, visibility, adapter_type, display_name,
             persona_kind, description, source_url, source_ref, source_commit,
             artifact_hash, upstream_schema_version, raw_artifact_path,
             is_real_person, is_public_figure,
-            relationship_ceiling, archived, creator, created_at, updater, updated_at
+            relationship_ceiling, creator, created_at, updater, updated_at
         ) VALUES (
             #{personaId}, #{ownerUserId}, #{visibility}, #{adapterType}, #{displayName},
             #{personaKind}, #{description}, #{sourceUrl}, #{sourceRef}, #{sourceCommit},
             #{artifactHash}, #{upstreamSchemaVersion}, #{artifactPath},
             #{realPerson}, #{publicFigure},
-            #{relationshipCeiling}, 0, #{ownerUserId}, NOW(), #{ownerUserId}, NOW()
+            #{relationshipCeiling}, #{ownerUserId}, NOW(), #{ownerUserId}, NOW()
         )
         ON DUPLICATE KEY UPDATE
-            display_name = VALUES(display_name),
-            persona_kind = VALUES(persona_kind),
-            description = VALUES(description),
-            source_url = VALUES(source_url),
-            source_ref = VALUES(source_ref),
-            source_commit = VALUES(source_commit),
-            artifact_hash = VALUES(artifact_hash),
-            upstream_schema_version = VALUES(upstream_schema_version),
-            raw_artifact_path = VALUES(raw_artifact_path),
-            is_real_person = VALUES(is_real_person),
-            is_public_figure = VALUES(is_public_figure),
-            relationship_ceiling = VALUES(relationship_ceiling),
-            archived = 0,
+            display_name = IF(latest_published_version IS NULL, VALUES(display_name), display_name),
+            persona_kind = IF(latest_published_version IS NULL, VALUES(persona_kind), persona_kind),
+            description = IF(latest_published_version IS NULL, VALUES(description), description),
+            source_url = IF(latest_published_version IS NULL, VALUES(source_url), source_url),
+            source_ref = IF(latest_published_version IS NULL, VALUES(source_ref), source_ref),
+            source_commit = IF(latest_published_version IS NULL, VALUES(source_commit), source_commit),
+            artifact_hash = IF(latest_published_version IS NULL, VALUES(artifact_hash), artifact_hash),
+            upstream_schema_version = IF(latest_published_version IS NULL, VALUES(upstream_schema_version), upstream_schema_version),
+            raw_artifact_path = IF(latest_published_version IS NULL, VALUES(raw_artifact_path), raw_artifact_path),
+            is_real_person = IF(latest_published_version IS NULL, VALUES(is_real_person), is_real_person),
+            is_public_figure = IF(latest_published_version IS NULL, VALUES(is_public_figure), is_public_figure),
+            relationship_ceiling = IF(latest_published_version IS NULL, VALUES(relationship_ceiling), relationship_ceiling),
             updater = VALUES(updater),
             updated_at = NOW()
     </insert>
 
     <insert id="insertPersonaVersion" parameterType="map">
         INSERT INTO ai_persona_version(
-            id, persona_source_id, version, artifact_hash, source_commit,
-            canonical_spec_json, runtime_prompt, compiler_version, token_count,
+            id, persona_source_id, version, parent_version, revision_no,
+            artifact_hash, source_commit, source_artifact_path,
+            canonical_spec_json, runtime_prompt, compiler_version, compiled_hash, token_count,
             quality_score, test_status, test_report, status, validation_report, created_at
         ) VALUES (
-            #{id}, #{personaId}, #{version}, #{artifactHash}, #{sourceCommit},
-            #{canonicalSpecJson}, #{runtimePrompt}, #{compilerVersion}, #{tokenCount},
+            #{id}, #{personaId}, #{version}, #{parentVersion}, #{revisionNo},
+            #{artifactHash}, #{sourceCommit}, #{sourceArtifactPath},
+            #{canonicalSpecJson}, #{runtimePrompt}, #{compilerVersion}, #{compiledHash}, #{tokenCount},
             #{qualityScore}, #{testStatus}, #{testReport}, 'draft', #{validationReport}, NOW()
         )
     </insert>
 
     <select id="selectVersionByHash" resultType="java.util.LinkedHashMap">
-        SELECT version, artifact_hash AS artifactHash, status
+        SELECT version, artifact_hash AS artifactHash, compiled_hash AS compiledHash, status
         FROM ai_persona_version
         WHERE persona_source_id = #{personaId} AND version = #{version}
         LIMIT 1
+    </select>
+
+    <select id="selectRevisionByCompiledHash" resultType="java.util.LinkedHashMap">
+        SELECT version, parent_version AS parentVersion, revision_no AS revisionNo,
+               compiled_hash AS compiledHash, status
+        FROM ai_persona_version
+        WHERE persona_source_id = #{personaId}
+          AND compiled_hash = #{compiledHash}
+          AND (version = #{revisionRoot} OR parent_version = #{revisionRoot})
+        ORDER BY revision_no DESC, created_at DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectMaxRevisionNo" resultType="int">
+        SELECT COALESCE(MAX(revision_no), 1)
+        FROM ai_persona_version
+        WHERE persona_source_id = #{personaId}
+          AND (version = #{revisionRoot} OR parent_version = #{revisionRoot})
     </select>
 
     <select id="selectPersonas" resultType="java.util.LinkedHashMap">
@@ -233,12 +428,17 @@
                s.source_commit AS sourceCommit,
                s.relationship_ceiling AS relationshipCeiling,
                s.latest_published_version AS publishedVersion,
+               s.previous_published_version AS previousVersion,
+               (
+                   SELECT v.version FROM ai_persona_version v
+                   WHERE v.persona_source_id = s.id AND v.status = 'draft'
+                   ORDER BY v.created_at DESC LIMIT 1
+               ) AS pendingVersion,
                (s.owner_user_id = #{userId}) AS owned,
-               s.archived,
                s.updated_at AS updatedAt
         FROM ai_persona_source s
-        WHERE s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public')
-        ORDER BY s.archived ASC, s.updated_at DESC
+        WHERE (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
+        ORDER BY s.updated_at DESC
     </select>
 
     <select id="selectPersona" resultType="java.util.LinkedHashMap">
@@ -253,12 +453,18 @@
                s.source_ref AS sourceRef,
                s.source_commit AS sourceCommit,
                s.artifact_hash AS artifactHash,
+               s.raw_artifact_path AS rawArtifactPath,
                s.is_real_person AS realPerson,
                s.is_public_figure AS publicFigure,
                s.relationship_ceiling AS relationshipCeiling,
                s.latest_published_version AS publishedVersion,
+               s.previous_published_version AS previousVersion,
+               (
+                   SELECT v.version FROM ai_persona_version v
+                   WHERE v.persona_source_id = s.id AND v.status = 'draft'
+                   ORDER BY v.created_at DESC LIMIT 1
+               ) AS pendingVersion,
                (s.owner_user_id = #{userId}) AS owned,
-               s.archived,
                s.created_at AS createdAt,
                s.updated_at AS updatedAt
         FROM ai_persona_source s
@@ -269,28 +475,57 @@
 
     <select id="selectVersions" resultType="java.util.LinkedHashMap">
         SELECT v.version,
+               v.parent_version AS parentVersion,
+               v.revision_no AS revisionNo,
                v.artifact_hash AS artifactHash,
                v.source_commit AS sourceCommit,
+               v.source_artifact_path AS sourceArtifactPath,
                v.compiler_version AS compilerVersion,
+               v.compiled_hash AS compiledHash,
                v.token_count AS tokenCount,
                v.quality_score AS qualityScore,
                v.test_status AS testStatus,
                v.status,
+               CASE
+                   WHEN v.version = s.latest_published_version THEN 'current'
+                   WHEN v.version = s.previous_published_version THEN 'previous'
+                   ELSE 'candidate'
+               END AS lifecycleRole,
                v.created_at AS createdAt,
-               v.published_at AS publishedAt,
-               v.archived_at AS archivedAt
+               v.published_at AS publishedAt
         FROM ai_persona_version v
         JOIN ai_persona_source s ON s.id = v.persona_source_id
         WHERE v.persona_source_id = #{personaId}
           AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
-        ORDER BY v.created_at DESC
+          AND (
+              v.version = s.latest_published_version
+              OR v.version = s.previous_published_version
+              OR v.version = (
+                  SELECT candidate.version FROM (
+                      SELECT v2.version
+                      FROM ai_persona_version v2
+                      WHERE v2.persona_source_id = #{personaId} AND v2.status = 'draft'
+                      ORDER BY v2.created_at DESC
+                      LIMIT 1
+                  ) candidate
+              )
+          )
+        ORDER BY CASE
+                     WHEN v.version = s.latest_published_version THEN 0
+                     WHEN v.status = 'draft' THEN 1
+                     ELSE 2
+                 END
     </select>
 
     <select id="selectVersion" resultType="java.util.LinkedHashMap">
         SELECT v.version,
+               v.parent_version AS parentVersion,
+               v.revision_no AS revisionNo,
                v.artifact_hash AS artifactHash,
                v.source_commit AS sourceCommit,
+               v.source_artifact_path AS sourceArtifactPath,
                v.compiler_version AS compilerVersion,
+               v.compiled_hash AS compiledHash,
                v.token_count AS tokenCount,
                v.quality_score AS qualityScore,
                v.test_status AS testStatus,
@@ -300,8 +535,7 @@
                CAST(v.canonical_spec_json AS CHAR) AS canonicalSpec,
                v.runtime_prompt AS runtimePrompt,
                v.created_at AS createdAt,
-               v.published_at AS publishedAt,
-               v.archived_at AS archivedAt
+               v.published_at AS publishedAt
         FROM ai_persona_version v
         JOIN ai_persona_source s ON s.id = v.persona_source_id
         WHERE v.persona_source_id = #{personaId}
@@ -309,6 +543,121 @@
           AND (s.owner_user_id = #{userId} OR s.visibility IN ('shared', 'public'))
         LIMIT 1
     </select>
+
+    <select id="selectSignatureOverrides" resultType="java.util.LinkedHashMap">
+        SELECT id,
+               persona_source_id AS personaId,
+               persona_version AS version,
+               signature_key AS signatureKey,
+               display_text AS displayText,
+               semantic_rule AS semanticRule,
+               CAST(explicit_aliases_json AS CHAR) AS explicitAliasesJson,
+               CAST(positive_examples_json AS CHAR) AS positiveExamplesJson,
+               ambiguity_policy AS ambiguityPolicy,
+               fallback_mode AS fallbackMode,
+               CAST(style_map_json AS CHAR) AS styleMapJson,
+               disabled,
+               updated_at AS updatedAt
+        FROM ai_persona_signature_override
+        WHERE persona_source_id = #{personaId} AND persona_version = #{version}
+        ORDER BY created_at ASC
+    </select>
+
+    <insert id="upsertSignatureOverride" parameterType="map">
+        INSERT INTO ai_persona_signature_override(
+            id, persona_source_id, persona_version, signature_key, display_text,
+            semantic_rule, explicit_aliases_json, positive_examples_json,
+            ambiguity_policy, fallback_mode, style_map_json, disabled,
+            owner_user_id, created_at, updated_at
+        ) VALUES (
+            #{id}, #{personaId}, #{version}, #{signatureKey}, #{displayText},
+            #{semanticRule}, #{explicitAliasesJson}, #{positiveExamplesJson},
+            #{ambiguityPolicy}, #{fallbackMode}, #{styleMapJson}, #{disabled},
+            #{ownerUserId}, NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            display_text = VALUES(display_text),
+            semantic_rule = VALUES(semantic_rule),
+            explicit_aliases_json = VALUES(explicit_aliases_json),
+            positive_examples_json = VALUES(positive_examples_json),
+            ambiguity_policy = VALUES(ambiguity_policy),
+            fallback_mode = VALUES(fallback_mode),
+            style_map_json = VALUES(style_map_json),
+            disabled = VALUES(disabled),
+            owner_user_id = VALUES(owner_user_id),
+            updated_at = NOW()
+    </insert>
+
+    <update id="setSignatureOverrideDisabled">
+        UPDATE ai_persona_signature_override
+        SET disabled = #{disabled}, updated_at = NOW()
+        WHERE persona_source_id = #{personaId}
+          AND persona_version = #{version}
+          AND signature_key = #{signatureKey}
+          AND owner_user_id = #{ownerUserId}
+    </update>
+
+    <select id="selectSignatureAssets" resultType="java.util.LinkedHashMap">
+        SELECT id AS assetId,
+               persona_source_id AS personaId,
+               persona_version AS version,
+               signature_key AS signatureKey,
+               variant,
+               content_type AS contentType,
+               original_filename AS originalFilename,
+               byte_size AS byteSize,
+               sha256,
+               updated_at AS updatedAt
+        FROM ai_persona_signature_asset
+        WHERE persona_source_id = #{personaId} AND persona_version = #{version}
+        ORDER BY signature_key ASC,
+                 FIELD(variant, 'classic', 'playful', 'soft'),
+                 variant ASC
+    </select>
+
+    <insert id="upsertSignatureAsset" parameterType="map">
+        INSERT INTO ai_persona_signature_asset(
+            id, persona_source_id, persona_version, signature_key, variant,
+            content_type, original_filename, audio_data, byte_size, sha256,
+            owner_user_id, created_at, updated_at
+        ) VALUES (
+            #{id}, #{personaId}, #{version}, #{signatureKey}, #{variant},
+            #{contentType}, #{originalFilename}, #{audioData}, #{byteSize}, #{sha256},
+            #{ownerUserId}, NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            id = VALUES(id),
+            content_type = VALUES(content_type),
+            original_filename = VALUES(original_filename),
+            audio_data = VALUES(audio_data),
+            byte_size = VALUES(byte_size),
+            sha256 = VALUES(sha256),
+            owner_user_id = VALUES(owner_user_id),
+            updated_at = NOW()
+    </insert>
+
+    <select id="selectSignatureAsset" resultType="java.util.LinkedHashMap">
+        SELECT id AS assetId,
+               persona_source_id AS personaId,
+               persona_version AS version,
+               signature_key AS signatureKey,
+               variant,
+               content_type AS contentType,
+               original_filename AS originalFilename,
+               audio_data AS audioData,
+               byte_size AS byteSize,
+               sha256,
+               owner_user_id AS ownerUserId,
+               updated_at AS updatedAt
+        FROM ai_persona_signature_asset
+        WHERE id = #{assetId}
+        LIMIT 1
+    </select>
+
+    <delete id="deleteSignatureAsset">
+        DELETE FROM ai_persona_signature_asset
+        WHERE id = #{assetId} AND owner_user_id = #{ownerUserId}
+    </delete>
 
     <update id="publishVersion">
         UPDATE ai_persona_version v
@@ -319,41 +668,95 @@
         WHERE v.persona_source_id = #{personaId}
           AND v.version = #{version}
           AND s.owner_user_id = #{userId}
-          AND s.archived = 0
-          AND v.status != 'archived'
+          AND v.status = 'draft'
           AND JSON_UNQUOTE(JSON_EXTRACT(v.validation_report, '$.valid')) = 'true'
           AND v.test_status = 'passed'
     </update>
 
-    <update id="publishSource">
+    <update id="applySourceVersion">
         UPDATE ai_persona_source s
         JOIN ai_persona_version v
           ON v.persona_source_id = s.id
          AND v.version = #{version}
          AND v.status = 'published'
-        SET s.latest_published_version = v.version,
-            s.visibility = #{visibility},
+        SET s.previous_published_version = s.latest_published_version,
+            s.latest_published_version = v.version,
+            s.display_name = COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.display_name')), ''),
+                s.display_name),
+            s.description = COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.identity.summary')), ''),
+                s.description),
+            s.relationship_ceiling = COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.relationship_policy.ceiling')), ''),
+                s.relationship_ceiling),
+            s.is_real_person = CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'true' THEN 1
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'false' THEN 0
+                ELSE s.is_real_person
+            END,
+            s.is_public_figure = CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_public_figure')) = 'true' THEN 1
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_public_figure')) = 'false' THEN 0
+                ELSE s.is_public_figure
+            END,
+            s.persona_kind = CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_public_figure')) = 'true' THEN 'public_figure'
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'true' THEN 'real_person'
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'false' THEN 'fictional'
+                ELSE s.persona_kind
+            END,
+            s.source_commit = COALESCE(v.source_commit, s.source_commit),
+            s.artifact_hash = COALESCE(v.artifact_hash, s.artifact_hash),
+            s.raw_artifact_path = COALESCE(v.source_artifact_path, s.raw_artifact_path),
             s.updated_at = NOW(),
             s.updater = #{userId}
         WHERE s.id = #{personaId}
           AND s.owner_user_id = #{userId}
-          AND s.archived = 0
     </update>
 
-    <update id="setPublishedPointer">
+    <update id="restorePreviousVersion">
         UPDATE ai_persona_source s
-        JOIN ai_persona_version v ON v.persona_source_id = s.id AND v.version = #{version}
-        SET s.latest_published_version = #{version}, s.updated_at = NOW()
-        WHERE s.id = #{personaId} AND v.status = 'published' AND s.archived = 0
-    </update>
-
-    <update id="archiveVersion">
-        UPDATE ai_persona_version v
-        JOIN ai_persona_source s ON s.id = v.persona_source_id
-        SET v.status = 'archived', v.archived_at = NOW()
-        WHERE v.persona_source_id = #{personaId}
-          AND v.version = #{version}
-          AND (s.latest_published_version IS NULL OR s.latest_published_version != #{version})
+        JOIN ai_persona_version v
+          ON v.persona_source_id = s.id
+         AND v.version = #{previousVersion}
+         AND v.status = 'published'
+        SET s.latest_published_version = #{previousVersion},
+            s.previous_published_version = #{currentVersion},
+            s.display_name = COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.display_name')), ''),
+                s.display_name),
+            s.description = COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.identity.summary')), ''),
+                s.description),
+            s.relationship_ceiling = COALESCE(
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.relationship_policy.ceiling')), ''),
+                s.relationship_ceiling),
+            s.is_real_person = CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'true' THEN 1
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'false' THEN 0
+                ELSE s.is_real_person
+            END,
+            s.is_public_figure = CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_public_figure')) = 'true' THEN 1
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_public_figure')) = 'false' THEN 0
+                ELSE s.is_public_figure
+            END,
+            s.persona_kind = CASE
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_public_figure')) = 'true' THEN 'public_figure'
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'true' THEN 'real_person'
+                WHEN JSON_UNQUOTE(JSON_EXTRACT(v.canonical_spec_json, '$.source.is_real_person')) = 'false' THEN 'fictional'
+                ELSE s.persona_kind
+            END,
+            s.source_commit = COALESCE(v.source_commit, s.source_commit),
+            s.artifact_hash = COALESCE(v.artifact_hash, s.artifact_hash),
+            s.raw_artifact_path = COALESCE(v.source_artifact_path, s.raw_artifact_path),
+            s.updater = #{userId},
+            s.updated_at = NOW()
+        WHERE s.id = #{personaId}
+          AND s.owner_user_id = #{userId}
+          AND s.latest_published_version = #{currentVersion}
+          AND s.previous_published_version = #{previousVersion}
     </update>
 
     <insert id="insertTestRun" parameterType="map">
@@ -375,7 +778,7 @@
     <update id="updateVersionTest">
         UPDATE ai_persona_version
         SET test_status = #{testStatus}, quality_score = #{qualityScore}, test_report = #{testReport}
-        WHERE persona_source_id = #{personaId} AND version = #{version} AND status != 'archived'
+        WHERE persona_source_id = #{personaId} AND version = #{version}
     </update>
 
     <select id="selectTestRuns" resultType="java.util.LinkedHashMap">

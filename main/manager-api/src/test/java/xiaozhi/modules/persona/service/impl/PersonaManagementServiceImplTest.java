@@ -2,11 +2,14 @@ package xiaozhi.modules.persona.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,23 +25,26 @@ import xiaozhi.modules.persona.metrics.PersonaMetrics;
 
 class PersonaManagementServiceImplTest {
     @Test
-    void publishUpdatesVersionAndSourceAsTwoSingleRowOperations() {
+    void applyUpdateMovesTheCandidateToCurrentAndPrunesOldArtifacts() {
         PersonaDao dao = mock(PersonaDao.class);
         PersonaManagementServiceImpl service = service(dao);
         stubOwnedPublishableVersion(dao);
         when(dao.publishVersion("persona.test", "v1", 7L)).thenReturn(1);
-        when(dao.publishSource("persona.test", "v1", 7L, "private")).thenReturn(1);
+        when(dao.applySourceVersion("persona.test", "v1", 7L)).thenReturn(1);
+        when(dao.selectLifecycleVersions("persona.test")).thenReturn(Map.of(
+                "currentVersion", "v1",
+                "previousVersion", "v0"));
 
-        service.publish(7L, "persona.test", "v1", "private");
+        service.applyUpdate(7L, "persona.test", "v1");
 
         verify(dao).publishVersion("persona.test", "v1", 7L);
-        verify(dao).publishSource("persona.test", "v1", 7L, "private");
-        verify(dao).insertAudit(7L, "persona_published", "persona_version", "persona.test@v1",
-                "{\"visibility\":\"private\"}");
+        verify(dao).applySourceVersion("persona.test", "v1", 7L);
+        verify(dao).deleteVersionsOutsideLifecycle("persona.test", List.of("v1", "v0"));
+        verify(dao).insertAudit(7L, "persona_update_applied", "persona_version", "persona.test@v1", "{}");
     }
 
     @Test
-    void publishReportsValidationFailureBeforeWritingState() {
+    void applyUpdateReportsValidationFailureBeforeWritingState() {
         PersonaDao dao = mock(PersonaDao.class);
         PersonaManagementServiceImpl service = service(dao);
         when(dao.selectPersona(7L, "persona.test")).thenReturn(Map.of("ownerUserId", 7L));
@@ -47,11 +53,11 @@ class PersonaManagementServiceImplTest {
         when(dao.selectVersion(7L, "persona.test", "v1")).thenReturn(version);
 
         RenException error = assertThrows(RenException.class,
-                () -> service.publish(7L, "persona.test", "v1", "private"));
+                () -> service.applyUpdate(7L, "persona.test", "v1"));
 
-        assertEquals("Persona 未通过结构校验，不能发布", error.getMessage());
+        assertEquals("人物更新未通过结构校验，不能应用", error.getMessage());
         verify(dao, never()).publishVersion("persona.test", "v1", 7L);
-        verify(dao, never()).publishSource("persona.test", "v1", 7L, "private");
+        verify(dao, never()).applySourceVersion("persona.test", "v1", 7L);
     }
 
     @Test
@@ -74,6 +80,71 @@ class PersonaManagementServiceImplTest {
         ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
         verify(compiler).test(captor.capture());
         assertEquals(samples, captor.getValue().get("conversationSamples"));
+    }
+
+    @Test
+    void usageReportsOwnedAndExternalBindings() {
+        PersonaDao dao = mock(PersonaDao.class);
+        PersonaManagementServiceImpl service = service(dao);
+        when(dao.selectPersona(7L, "persona.test")).thenReturn(Map.of("ownerUserId", 7L));
+        when(dao.countPersonaBindings("persona.test")).thenReturn(3);
+        when(dao.selectOwnedPersonaBindings("persona.test", 7L)).thenReturn(List.of(
+                Map.of("agentId", "agent-1", "agentName", "测试智能体")));
+
+        Map<String, Object> usage = service.usage(7L, "persona.test");
+
+        assertEquals(3, usage.get("bindingCount"));
+        assertEquals(2, usage.get("externalBindingCount"));
+        assertEquals(true, usage.get("deletable"));
+        assertEquals(3, usage.get("willUnbind"));
+    }
+
+    @Test
+    void deletePermanentlyClearsBindingsRuntimeDataAndSource() {
+        PersonaDao dao = mock(PersonaDao.class);
+        PersonaManagementServiceImpl service = service(dao);
+        when(dao.selectPersona(7L, "persona.test")).thenReturn(Map.of("ownerUserId", 7L));
+        when(dao.selectPersonaArtifactPaths("persona.test", 7L)).thenReturn(List.of());
+        when(dao.hardDeletePersonaSource("persona.test", 7L)).thenReturn(1);
+
+        service.delete(7L, "persona.test", "persona.test");
+
+        verify(dao).clearPersonaBindings("persona.test");
+        verify(dao).deletePersonaMemories("persona.test");
+        verify(dao).deletePersonaEvents("persona.test");
+        verify(dao).deletePersonaTurns("persona.test");
+        verify(dao).deletePersonaStates("persona.test");
+        verify(dao).hardDeletePersonaSource("persona.test", 7L);
+    }
+
+    @Test
+    void deleteRequiresExactPersonaIdConfirmation() {
+        PersonaDao dao = mock(PersonaDao.class);
+        PersonaManagementServiceImpl service = service(dao);
+        when(dao.selectPersona(7L, "persona.test")).thenReturn(Map.of("ownerUserId", 7L));
+
+        RenException error = assertThrows(RenException.class,
+                () -> service.delete(7L, "persona.test", "wrong"));
+
+        assertTrue(error.getMessage().contains("确认文本不匹配"));
+        verify(dao, never()).hardDeletePersonaSource("persona.test", 7L);
+    }
+
+    @Test
+    void restorePreviousSwapsOnlyTheTwoLifecyclePointers() {
+        PersonaDao dao = mock(PersonaDao.class);
+        PersonaManagementServiceImpl service = service(dao);
+        when(dao.selectPersona(7L, "persona.test")).thenReturn(Map.of(
+                "ownerUserId", 7L,
+                "publishedVersion", "v2",
+                "previousVersion", "v1"));
+        when(dao.restorePreviousVersion("persona.test", 7L, "v2", "v1")).thenReturn(1);
+
+        service.restorePrevious(7L, "persona.test");
+
+        verify(dao).restorePreviousVersion("persona.test", 7L, "v2", "v1");
+        verify(dao).insertAudit(eq(7L), eq("persona_previous_restored"), eq("persona_version"),
+                eq("persona.test@v1"), anyString());
     }
 
     private static PersonaManagementServiceImpl service(PersonaDao dao) {

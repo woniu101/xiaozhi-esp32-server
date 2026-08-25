@@ -5,6 +5,7 @@ import uuid
 from typing import Awaitable, Callable
 
 from core.providers.tts.dto.dto import ContentType, SentenceType, TTSMessageDTO
+from core.companion.signature_audio import SignatureSpeechRouter, enqueue_speech_segments
 
 
 @dataclass(frozen=True)
@@ -71,15 +72,17 @@ async def enqueue_online_proactive_playback(
                 turn_id=(expression_plan or {}).get("turn_id"),
             )
         )
-        conn.tts.tts_text_queue.put(
-            TTSMessageDTO(
-                sentence_id,
-                SentenceType.MIDDLE,
-                ContentType.TEXT,
-                content_detail=message,
-                expression_plan=expression_plan,
-                turn_id=(expression_plan or {}).get("turn_id"),
-            )
+        signature_router = SignatureSpeechRouter.from_session(
+            getattr(conn, "companion_session", None), expression_plan
+        )
+        enqueue_speech_segments(
+            conn.tts,
+            signature_router,
+            message,
+            sentence_id=sentence_id,
+            expression_plan=expression_plan,
+            turn_id=(expression_plan or {}).get("turn_id"),
+            final=True,
         )
         conn.tts.tts_text_queue.put(
             TTSMessageDTO(

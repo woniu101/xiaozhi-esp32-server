@@ -132,17 +132,9 @@
                             <span class="persona-option-meta">{{ item.relationshipCeiling }} · {{ item.publishedVersion }}</span>
                           </el-option>
                         </el-select>
-                        <el-select
-                          v-model="form.personaVersion"
-                          :disabled="!form.companionEnabled"
-                          :placeholder="$t('roleConfig.personaVersionPlaceholder')"
-                          clearable
-                          class="form-input"
-                        >
-                          <el-option value="" :label="$t('roleConfig.personaLatestVersion')" />
-                          <el-option v-for="item in personaVersions" :key="item.version"
-                            :value="item.version" :label="`${item.version} (${item.status})`" />
-                        </el-select>
+                        <div v-if="form.companionEnabled && form.personaId" class="persona-follow-current">
+                          <i class="el-icon-refresh"></i>{{ $t('roleConfig.personaFollowsCurrent') }}
+                        </div>
                         <div class="overlay-editor" :class="{ disabled: !form.companionEnabled }">
                           <div class="overlay-row">
                             <el-input v-model.trim="companionOverlayForm.user_address" :disabled="!form.companionEnabled"
@@ -770,6 +762,10 @@
             <el-descriptions-item label="上下文耗时">{{ companionDiagnostic.contextBuildMs || 0 }} ms</el-descriptions-item>
             <el-descriptions-item label="回应动作">{{ diagnosticResponseAct }}</el-descriptions-item>
             <el-descriptions-item label="关系阶段">{{ diagnosticRelationshipStage }}</el-descriptions-item>
+            <el-descriptions-item label="用户当前情绪">{{ diagnosticUserAffect }}</el-descriptions-item>
+            <el-descriptions-item label="人物跨轮心情">{{ diagnosticCompanionMood }}</el-descriptions-item>
+            <el-descriptions-item label="本轮文本表达">{{ diagnosticTextExpression }}</el-descriptions-item>
+            <el-descriptions-item label="本轮声音表达">{{ diagnosticVoiceExpression }}</el-descriptions-item>
             <el-descriptions-item label="首 Token">{{ formatDiagnosticLatency('llm_first_tokenMs') }}</el-descriptions-item>
             <el-descriptions-item label="首段送入 TTS">{{ formatDiagnosticLatency('tts_text_enqueuedMs') }}</el-descriptions-item>
             <el-descriptions-item label="首包音频">{{ formatDiagnosticLatency('first_audioMs') }}</el-descriptions-item>
@@ -833,7 +829,6 @@ export default {
         summaryMemory: "",
         companionEnabled: false,
         personaId: "",
-        personaVersion: "",
         companionOverlay: "{}",
         langCode: "",
         language: "",
@@ -906,7 +901,6 @@ export default {
       checkedReplacementWordIds: [],
       companionSummary: null,
       personaOptions: [],
-      personaVersions: [],
       companionStages: ["stranger", "familiar", "friend", "ambiguous", "lover", "intimate"],
       companionAdvanced: false,
       advancedConfig: false,
@@ -952,6 +946,43 @@ export default {
         && this.companionDiagnostic.stateAfter.relationship
         && this.companionDiagnostic.stateAfter.relationship.stage) || "-";
     },
+    diagnosticUserAffect() {
+      const affect = this.companionDiagnostic?.userAffect || {};
+      if (!affect.dominant) return "-";
+      const confidence = Number.isFinite(affect.confidence)
+        ? ` / 置信度 ${Math.round(affect.confidence * 100)}%`
+        : "";
+      return `${affect.dominant}${confidence}${affect.conflictingSources ? " / 来源冲突" : ""}`;
+    },
+    diagnosticCompanionMood() {
+      const mood = this.companionDiagnostic?.stateAfter?.emotion || {};
+      if (!mood.dominant) return "-";
+      const intensity = Number.isFinite(mood.intensity)
+        ? ` / ${Math.round(mood.intensity * 100)}%`
+        : "";
+      const repeats = Number(mood.repeat_count || 0) > 1
+        ? ` / 同类事件×${mood.repeat_count}`
+        : "";
+      return `${mood.dominant}${intensity}${repeats}`;
+    },
+    diagnosticTextExpression() {
+      const plan = this.companionDiagnostic?.expressionPlan || {};
+      if (!plan.primary_style) return "-";
+      const intensity = Number.isFinite(plan.text_intensity)
+        ? ` / ${Math.round(plan.text_intensity * 100)}%`
+        : "";
+      return `${plan.primary_style}${intensity}`;
+    },
+    diagnosticVoiceExpression() {
+      const plan = this.companionDiagnostic?.expressionPlan || {};
+      if (!plan.primary_style) return "-";
+      const providerStyle = plan.provider_hint?.style || plan.primary_style;
+      const voiceIntensity = plan.voice_intensity ?? plan.intensity;
+      const intensity = Number.isFinite(voiceIntensity)
+        ? ` / ${Math.round(voiceIntensity * 100)}%`
+        : "";
+      return `${providerStyle}${intensity}`;
+    },
     relationshipModeStageLabels() {
       const map = {
         friend: ["stranger", "familiar", "friend"],
@@ -988,7 +1019,7 @@ export default {
     effectivePersonaLabel() {
       if (!this.form.companionEnabled) return "基础角色";
       const persona = this.personaOptions.find(item => item.personaId === this.form.personaId);
-      const version = this.form.personaVersion || persona?.publishedVersion || "当前发布版";
+      const version = persona?.publishedVersion || "当前启用版";
       return persona ? `${persona.displayName} · ${version}` : (this.form.personaId || "未选择");
     },
     selectedVoiceLabel() {
@@ -1095,18 +1126,7 @@ export default {
       });
     },
     handlePersonaChange(personaId) {
-      this.personaVersions = [];
-      if (!personaId) {
-        this.form.personaVersion = "";
-        return;
-      }
-      Api.persona.versions(personaId, ({ data }) => {
-        if (data?.code !== 0) return;
-        this.personaVersions = (data.data || []).filter(item => item.status === "published");
-        if (this.form.personaVersion && !this.personaVersions.some(item => item.version === this.form.personaVersion)) {
-          this.form.personaVersion = "";
-        }
-      });
+      if (!personaId) return;
     },
     syncOverlayFormFromJson() {
       try {
@@ -1257,7 +1277,6 @@ export default {
         summaryMemory: this.form.summaryMemory,
         companionEnabled: this.form.companionEnabled,
         personaId: this.form.personaId,
-        personaVersion: this.form.personaVersion,
         companionOverlay: this.form.companionOverlay || "{}",
         langCode: this.form.langCode,
         language: this.form.language,
@@ -1750,7 +1769,6 @@ export default {
               ...agentData,
               companionEnabled: Boolean(agentData.companionEnabled),
               personaId: agentData.personaId || "",
-              personaVersion: agentData.personaVersion || "",
               companionOverlay: agentData.companionOverlay || "{}",
               model: {
                 ttsModelId: agentData.ttsModelId,
@@ -3213,6 +3231,21 @@ export default {
   flex-direction: column;
   width: 100%;
   gap: 8px;
+}
+
+.persona-follow-current {
+  padding: 8px 10px;
+  border: 1px solid #dce8ff;
+  border-radius: 6px;
+  background: #f5f9ff;
+  color: #5d76a5;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.persona-follow-current i {
+  margin-right: 6px;
+  color: #409eff;
 }
 
 .companion-heading,

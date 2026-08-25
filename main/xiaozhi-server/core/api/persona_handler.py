@@ -22,11 +22,12 @@ from core.companion.models import PersonaSpec
 from core.companion.persona.evaluator import evaluate_persona
 from core.companion.observability import metrics
 from core.companion.persona.judge import PersonaJudge
+from core.companion.persona.semantic_extractor import PersonaSemanticExtractor
 from core.companion.persona.conversation_evaluator import evaluate_conversation_samples
-from core.companion.runtime import companion_runtime_health
+from core.companion.runtime import companion_runtime_health, evict_companion_persona
 
 
-COMPILER_VERSION = "cyber-persona-compiler/4"
+COMPILER_VERSION = "cyber-persona-compiler/6"
 MAX_CLOCK_SKEW_SECONDS = 60
 MAX_JSON_BYTES = 16 * 1024 * 1024
 SAFE_TEXT_RE = re.compile(r"[^a-zA-Z0-9._:/@+\- ]+")
@@ -42,6 +43,9 @@ class PersonaCompilerHandler(BaseHandler):
         self._nonces: dict[str, float] = {}
         self._nonce_lock = threading.Lock()
         self.judge = PersonaJudge(companion.get("persona_judge"))
+        self.semantic_extractor = PersonaSemanticExtractor(
+            companion.get("persona_semantic_extractor")
+        )
 
     def _safe_error(self, error: Exception) -> str:
         text = SAFE_TEXT_RE.sub(" ", str(error)).strip()
@@ -146,6 +150,10 @@ class PersonaCompilerHandler(BaseHandler):
             handle.flush()
             result = DotSkillAdapter().convert(handle.name)
         self._apply_trusted_metadata(result.spec, metadata)
+        semantic_report = getattr(
+            self, "semantic_extractor", PersonaSemanticExtractor(None)
+        ).enrich(result.spec)
+        result.spec.conversion_coverage["semantic_analysis"] = semantic_report
         result.report = PersonaSpecValidator().validate(result.spec)
         runtime_prompt = PersonaCompiler().compile(result.spec)
         test_report = evaluate_persona(result.spec, runtime_prompt)
@@ -164,6 +172,7 @@ class PersonaCompilerHandler(BaseHandler):
             "validationReport": result.report.to_dict(),
             "testReport": test_report,
             "judgeReport": judge_report,
+            "semanticAnalysis": semantic_report,
             "publishable": result.report.valid and test_report["status"] == "passed" and judge_passed,
         }
 
@@ -200,7 +209,28 @@ class PersonaCompilerHandler(BaseHandler):
                     "detected": inspection.detected,
                     "metadata": inspection.metadata,
                     "warnings": inspection.warnings,
-                    "artifactHash": hashlib.sha256(artifact).hexdigest(),
+                    # This must use the same normalized source digest as convert().
+                    # A raw ZIP hash changes with archive metadata and cannot be
+                    # compared with ai_persona_version.artifact_hash.
+                    "artifactHash": inspection.artifact_sha256,
+                },
+                dumps=lambda value: json.dumps(value, ensure_ascii=False),
+            )
+        except web.HTTPException:
+            raise
+        except Exception as error:
+            return web.json_response({"error": self._safe_error(error)}, status=400)
+
+    async def handle_cache_evict(self, request: web.Request):
+        try:
+            payload = await self._payload(request)
+            persona_id = str(payload.get("personaId") or "").strip()
+            if not persona_id or len(persona_id) > 160:
+                raise ValueError("缺少合法的 personaId")
+            return web.json_response(
+                {
+                    "personaId": persona_id,
+                    "evictedEntries": evict_companion_persona(persona_id),
                 },
                 dumps=lambda value: json.dumps(value, ensure_ascii=False),
             )

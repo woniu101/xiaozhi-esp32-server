@@ -41,6 +41,12 @@ class ManagerApiPersonaRegistry:
             raise RuntimeError("manager-api client 尚未初始化")
         return ManageApiClient._instance
 
+    def evict(self, persona_id: str) -> int:
+        keys = [key for key in self._cache if key[0] == persona_id]
+        for key in keys:
+            self._cache.pop(key, None)
+        return len(keys)
+
     async def load_for_runtime(
         self,
         persona_id: str,

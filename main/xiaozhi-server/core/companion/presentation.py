@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .emotion import EmotionProfile
+from .input_signal import derive_user_affect
 from .state_models import TurnExpressionPlan, UserTurnSignal
 
 
@@ -106,6 +108,9 @@ def resolve_turn_expression_plan(
     valence = float(getattr(state, "valence", 0.55)) if state else 0.55
     arousal = float(getattr(state, "arousal", 0.35)) if state else 0.35
     metadata = getattr(context, "metadata", {}) or {}
+    emotion_profile = EmotionProfile.from_persona(
+        getattr(session, "persona_spec", None)
+    )
     event_types = set(metadata.get("event_types") or ())
     if not event_types:
         event_types = {
@@ -113,11 +118,9 @@ def resolve_turn_expression_plan(
             for event in getattr(session, "turn_preview_events", [])
         }
     if user_signal is not None:
-        signal_emotion = user_signal.text_emotion or user_signal.acoustic_emotion
-        signal_confidence = max(
-            user_signal.text_confidence,
-            user_signal.acoustic_confidence,
-        )
+        user_affect = derive_user_affect(user_signal)
+        signal_emotion = user_affect.dominant
+        signal_confidence = user_affect.confidence
         if signal_confidence >= 0.55 and signal_emotion == "HAPPY":
             event_types.add("user_expressed_joy")
         elif signal_confidence >= 0.55 and signal_emotion in {
@@ -204,7 +207,11 @@ def resolve_turn_expression_plan(
             modifiers.append("apologetic")
         intensity = max(intensity, 0.55)
         reasons.append("response_apology")
-    elif any(mark in text for mark in ("😆", "😂", "🎉")) and irritation < 0.3:
+    elif (
+        any(mark in text for mark in ("😆", "😂", "🎉"))
+        and irritation < 0.3
+        and style not in {"comforting", "vulnerable", "annoyed"}
+    ):
         style = "excited"
         intensity = max(intensity, 0.72)
         reasons.append("response_excitement")
@@ -214,6 +221,15 @@ def resolve_turn_expression_plan(
         provider_style = "apologetic"
     overlay = getattr(session, "overlay", {}) or {}
     dynamic_enabled = bool(session is not None and overlay.get("tts_dynamic_emotion", True))
+    # Persona expressiveness primarily shapes textual behaviour. Voice stays
+    # deliberately subtler, especially for negative styles, to avoid overacting.
+    text_intensity = _clamp(intensity * emotion_profile.expressiveness)
+    voice_intensity = _clamp(text_intensity * 0.88)
+    if style in {"annoyed", "vulnerable"}:
+        voice_intensity = min(voice_intensity, emotion_profile.negative_voice_cap)
+    speed = 1.0 + (
+        SPEED_BY_PRIMARY.get(style, 1.0) - 1.0
+    ) * min(emotion_profile.expressiveness, 1.0)
     resolved_turn_id = str(
         turn_id
         or getattr(user_signal, "turn_id", None)
@@ -224,8 +240,9 @@ def resolve_turn_expression_plan(
         turn_id=resolved_turn_id,
         primary_style=style,
         modifiers=tuple(dict.fromkeys(modifiers)),
-        intensity=round(_clamp(intensity), 2),
-        speed=SPEED_BY_PRIMARY.get(style, 1.0),
+        text_intensity=round(text_intensity, 2),
+        intensity=round(voice_intensity, 2),
+        speed=round(_clamp(speed, 0.85, 1.15), 2),
         reason_codes=tuple(dict.fromkeys(reasons)),
         device_expression=DEVICE_EXPRESSION_BY_PRIMARY.get(style, "neutral"),
         provider_hint={"style": provider_style},
@@ -251,6 +268,10 @@ def render_expression_plan(plan: TurnExpressionPlan) -> str:
     ]
     if modifier_guidance:
         guidance += "；" + "；".join(modifier_guidance)
+    if plan.text_intensity <= 0.42:
+        guidance += "；情绪只轻微带出，不要夸张"
+    elif plan.text_intensity >= 0.72:
+        guidance += "；表达可以明显一些，但不演戏"
     return (
         "<turn_expression>\n"
         f"本轮统一表达：{guidance}。\n"

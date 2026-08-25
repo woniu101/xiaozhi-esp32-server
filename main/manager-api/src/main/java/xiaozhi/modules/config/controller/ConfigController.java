@@ -22,7 +22,9 @@ import xiaozhi.modules.config.dto.CompanionRuntimeDTO.MemorySearchRequest;
 import xiaozhi.modules.config.service.CompanionRuntimeService;
 import xiaozhi.modules.config.service.ConfigService;
 import xiaozhi.modules.persona.dto.PersonaRuntimeDTO.ResolveRequest;
+import xiaozhi.modules.persona.dto.PersonaRuntimeDTO.SignatureAssetRequest;
 import xiaozhi.modules.persona.service.PersonaService;
+import xiaozhi.modules.persona.service.PersonaSignatureService;
 
 /**
  * xiaozhi-server 配置获取
@@ -37,6 +39,7 @@ public class ConfigController {
     private final ConfigService configService;
     private final CompanionRuntimeService companionRuntimeService;
     private final PersonaService personaService;
+    private final PersonaSignatureService personaSignatureService;
 
     @PostMapping("server-base")
     @Operation(summary = "服务端获取配置接口")
@@ -88,5 +91,13 @@ public class ConfigController {
     @Operation(summary = "服务端解析已绑定并发布的 Persona")
     public Result<Map<String, Object>> resolveCompanionPersona(@Valid @RequestBody ResolveRequest dto) {
         return new Result<Map<String, Object>>().ok(personaService.resolveRuntime(dto));
+    }
+
+    @PostMapping("companion/persona/signature-asset")
+    @Operation(summary = "服务端读取当前已绑定 Persona 的招牌语音")
+    public Result<Map<String, Object>> resolveCompanionSignatureAsset(
+            @Valid @RequestBody SignatureAssetRequest dto) {
+        return new Result<Map<String, Object>>().ok(
+                personaSignatureService.resolveRuntimeAsset(dto));
     }
 }
