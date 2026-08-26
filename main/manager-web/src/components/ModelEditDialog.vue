@@ -65,8 +65,9 @@
     <el-form :model="form.configJson" ref="callInfoForm" label-width="auto" label-position="left">
       <template>
         <div v-for="(row, rowIndex) in chunkedCallInfoFields" :key="rowIndex" class="form-row">
-          <el-form-item v-for="field in row" :key="field.prop" :label="field.label" :prop="field.prop"
-            style="flex: 1">
+          <el-form-item v-for="field in row" :key="field.prop"
+            :label="isIndexTts && field.prop === 'streaming' ? '' : field.label" :prop="field.prop"
+            :class="{ 'index-streaming-inline-item': isIndexTts && field.prop === 'streaming' }" style="flex: 1">
             <template v-if="field.type === 'json-textarea'">
               <el-input v-model="fieldJsonMap[field.prop]" type="textarea" :rows="3"
                 :placeholder="$t('modelConfigDialog.enterJsonExample')"
@@ -81,6 +82,16 @@
                   "></el-input>
             </template>
 
+            <div v-else-if="isIndexTts && field.prop === 'streaming'" class="index-streaming-inline">
+              <span>{{ field.label }}</span>
+              <el-switch v-model="form.configJson[field.prop]" />
+              <el-tooltip :content="$t('modelConfigDialog.indexStreamingHelp')" placement="top">
+                <i class="el-icon-question index-streaming-help-icon" />
+              </el-tooltip>
+            </div>
+
+            <el-switch v-else-if="field.type === 'boolean'" v-model="form.configJson[field.prop]"></el-switch>
+
             <el-input v-else v-model="form.configJson[field.prop]" :placeholder="field.placeholder" :type="field.type"
               :show-password="field.type === 'password'" @focus="
                 isSensitiveField(field.prop)
@@ -93,17 +104,22 @@
         </div>
       </template>
     </el-form>
+    <IndexTtsConnectionTest
+      v-if="isIndexTts"
+      :config-json="form.configJson"
+    />
     </div>
   </CustomDialog>
 </template>
 
 <script>
 import CustomDialog from './CustomDialog.vue';
+import IndexTtsConnectionTest from './IndexTtsConnectionTest.vue';
 import Api from "@/apis/api";
 
 export default {
   name: "ModelEditDialog",
-  components: { CustomDialog },
+  components: { CustomDialog, IndexTtsConnectionTest },
   props: {
     visible: { type: Boolean, default: false },
     modelData: {
@@ -153,6 +169,9 @@ export default {
       return this.modelData.duplicateMode
         ? this.$t("modelConfigDialog.duplicateModel")
         : this.$t("modelConfigDialog.editModel");
+    },
+    isIndexTts() {
+      return this.form.configJson.type === 'index_tts_v2_5';
     },
     chunkedCallInfoFields() {
       const chunkSize = 2;
@@ -313,7 +332,11 @@ export default {
                 ? "json-textarea"
                 : f.type === "password"
                   ? "password"
-                  : "text",
+                  : f.type === "boolean"
+                    ? "boolean"
+                    : f.type === "number"
+                      ? "number"
+                      : "text",
             placeholder: `请输入${f.key}`,
           }));
 
@@ -337,6 +360,11 @@ export default {
             this.formatJson(configJson[field.prop])
           );
           configJson[field.prop] = this.ensureObject(configJson[field.prop]);
+        } else if (field.type === "boolean") {
+          configJson[field.prop] = configJson[field.prop] === true || String(configJson[field.prop]).toLowerCase() === "true";
+        } else if (field.type === "number") {
+          const numberValue = Number(configJson[field.prop]);
+          configJson[field.prop] = Number.isFinite(numberValue) ? numberValue : "";
         } else if (typeof configJson[field.prop] !== "string") {
           configJson[field.prop] = String(configJson[field.prop]);
         }
@@ -519,6 +547,20 @@ export default {
     gap: 20px;
     margin-bottom: 0;
   }
+
+  ::v-deep .index-streaming-inline-item .el-form-item__content {
+    margin-left: 0 !important;
+  }
+
+  .index-streaming-inline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+    color: #606266;
+  }
+
+  .index-streaming-help-icon { color: #8791a8; cursor: help; }
 
   ::v-deep .el-input__inner {
     height: 32px;

@@ -274,6 +274,17 @@ export default {
         });
       }).send();
   },
+  // 使用当前表单值测试 IndexTTS2.5，不保存配置
+  testIndexTtsConnection(configJson, callback, fail) {
+    RequestService.sendRequest()
+      .url(`${getServiceUrl()}/models/index-tts-v2-5/test`)
+      .method('POST')
+      .data({ configJson })
+      .success(callback)
+      .fail(fail)
+      .networkFail(fail)
+      .send();
+  },
   // 设置默认模型
   setDefaultModel(id, callback) {
     RequestService.sendRequest()

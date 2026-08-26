@@ -7,6 +7,8 @@ import asyncio
 import threading
 import traceback
 import concurrent.futures
+import struct
+import tempfile
 
 from core.utils import p3
 from datetime import datetime
@@ -45,6 +47,7 @@ class TTSProviderBase(ABC):
         self.tts_audio_queue = queue.Queue()
         self.tts_audio_first_sentence = True
         self.before_stop_play_files = []
+        self._duplex_session_finished = threading.Event()
         self.report_on_last = False
         # sentence_id 到文本的映射，用于流式TTS获取正确的字幕文本
         self._sentence_text_map = {}
@@ -122,6 +125,26 @@ class TTSProviderBase(ABC):
 
     def handle_audio_file(self, file_audio: bytes, text):
         self.before_stop_play_files.append((file_audio, text))
+
+    def _mark_duplex_session_finished(self):
+        self._duplex_session_finished.set()
+
+    def _restart_duplex_session_after_file(
+        self, session_id, finish_session, start_session
+    ):
+        """Place buffered FILE audio at a duplex session boundary before later text."""
+        self._duplex_session_finished.clear()
+        future = asyncio.run_coroutine_threadsafe(
+            finish_session(session_id), loop=self.conn.loop
+        )
+        future.result(timeout=self.tts_timeout)
+        if not self._duplex_session_finished.wait(timeout=self.tts_timeout):
+            raise TimeoutError("等待流式TTS会话边界超时")
+        self._duplex_session_finished.clear()
+        future = asyncio.run_coroutine_threadsafe(
+            start_session(session_id), loop=self.conn.loop
+        )
+        future.result(timeout=self.tts_timeout)
 
     def to_tts_stream(self, text, opus_handler: Callable[[bytes], None] = None) -> None:
         # 保留原始文本用于显示/上报
@@ -392,11 +415,11 @@ class TTSProviderBase(ABC):
                         self.to_tts_stream(segment_text, opus_handler=self.handle_opus)
                 elif ContentType.FILE == message.content_type:
                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
-                    tts_file = message.content_file
-                    if tts_file and os.path.exists(tts_file):
-                        self._process_audio_file_stream(
-                            tts_file, callback=self.handle_opus
-                        )
+                    self._play_audio_file_or_fallback(
+                        message,
+                        audio_handler=self.handle_opus,
+                        emit_first=True,
+                    )
                 if message.sentence_type == SentenceType.LAST:
                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
                     self.tts_audio_queue.put(
@@ -546,6 +569,83 @@ class TTSProviderBase(ABC):
         ):
             os.remove(tts_file)
 
+    def _play_audio_file_or_fallback(
+        self,
+        message,
+        audio_handler: Callable[[bytes], None] = None,
+        fallback_handler: Callable[[str], None] = None,
+        emit_first: bool = False,
+    ) -> bool:
+        """Decode a FILE fully before publishing it, then use current TTS on failure."""
+        text = message.content_detail or ""
+        handler = audio_handler or self.handle_opus
+        packet_count = 0
+        packet_store = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024)
+
+        def collect_packet(packet):
+            nonlocal packet_count
+            if not isinstance(packet, (bytes, bytearray)) or not packet:
+                return
+            value = bytes(packet)
+            packet_store.write(struct.pack(">I", len(value)))
+            packet_store.write(value)
+            packet_count += 1
+
+        try:
+            tts_file = message.content_file
+            if not tts_file or not os.path.isfile(tts_file):
+                raise FileNotFoundError(tts_file or "<empty>")
+            self._process_audio_file_stream(tts_file, callback=collect_packet)
+            if packet_count == 0:
+                raise ValueError("audio file decoded to zero packets")
+        except Exception as error:
+            packet_store.close()
+            logger.bind(tag=TAG).warning(
+                f"FILE音频播放失败，改用当前TTS合成原文字: {text}, 错误: {error}"
+            )
+            if not text:
+                return False
+            try:
+                if fallback_handler is not None:
+                    fallback_handler(text)
+                else:
+                    self.to_tts_stream(text, opus_handler=self.handle_opus)
+                return False
+            except Exception as fallback_error:
+                logger.bind(tag=TAG).error(
+                    f"FILE音频失败后的当前TTS回退也失败: {text}, 错误: {fallback_error}"
+                )
+                return False
+
+        try:
+            if emit_first:
+                self.tts_audio_queue.put(
+                    (
+                        SentenceType.FIRST,
+                        None,
+                        text,
+                        message.sentence_id,
+                    )
+                )
+            packet_store.seek(0)
+            for _ in range(packet_count):
+                header = packet_store.read(4)
+                if len(header) != 4:
+                    raise EOFError("buffered audio packet header is incomplete")
+                size = struct.unpack(">I", header)[0]
+                packet = packet_store.read(size)
+                if len(packet) != size:
+                    raise EOFError("buffered audio packet is incomplete")
+                handler(packet)
+            return True
+        except Exception as error:
+            logger.bind(tag=TAG).error(
+                f"FILE音频已开始发布后失败，不重复合成以避免重播: {text}, 错误: {error}"
+            )
+            return False
+        finally:
+            packet_store.close()
+
     def _process_before_stop_play_files(self):
         for audio_datas, text in self.before_stop_play_files:
             self.tts_audio_queue.put((SentenceType.MIDDLE, audio_datas, text, getattr(self, 'current_sentence_id', None)))
@@ -566,7 +666,7 @@ class TTSProviderBase(ABC):
             segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining_text)
             if segment_text:
                 self.to_tts_stream(segment_text, opus_handler=opus_handler)
-                self.processed_chars += len(full_text)
+                self.processed_chars = len(full_text)
                 return True
         return False
 

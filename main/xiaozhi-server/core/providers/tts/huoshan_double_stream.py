@@ -343,9 +343,21 @@ class TTSProvider(TTSProviderBase):
                     logger.bind(tag=TAG).info(
                         f"添加音频文件到待播放列表: {message.content_file}"
                     )
-                    if message.content_file and os.path.exists(message.content_file):
-                        # 先处理文件音频数据
-                        self._process_audio_file_stream(message.content_file, callback=lambda audio_data: self.handle_audio_file(audio_data, message.content_detail))
+                    file_played = self._play_audio_file_or_fallback(
+                        message,
+                        audio_handler=lambda audio_data: self.handle_audio_file(
+                            audio_data, message.content_detail
+                        ),
+                        fallback_handler=lambda text: asyncio.run_coroutine_threadsafe(
+                            self.text_to_speak(text, None), loop=self.conn.loop
+                        ).result(timeout=self.tts_timeout),
+                    )
+                    if file_played:
+                        self._restart_duplex_session_after_file(
+                            self.conn.sentence_id,
+                            self.finish_session,
+                            self.start_session,
+                        )
                 if message.sentence_type == SentenceType.LAST:
                     try:
                         logger.bind(tag=TAG).debug("开始结束TTS会话...")
@@ -543,6 +555,7 @@ class TTSProvider(TTSProviderBase):
                         # 非复用模式下，会话结束后发送 FinishConnection
                         if not self.enable_ws_reuse:
                             await self.finish_connection()
+                        self._mark_duplex_session_finished()
                 except websockets.ConnectionClosed:
                     logger.bind(tag=TAG).warning("WebSocket连接已关闭")
                     break

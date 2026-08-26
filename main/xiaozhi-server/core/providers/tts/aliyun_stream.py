@@ -272,9 +272,21 @@ class TTSProvider(TTSProviderBase):
                     logger.bind(tag=TAG).info(
                         f"添加音频文件到待播放列表: {message.content_file}"
                     )
-                    if message.content_file and os.path.exists(message.content_file):
-                        # 先处理文件音频数据
-                        self._process_audio_file_stream(message.content_file, callback=lambda audio_data: self.handle_audio_file(audio_data, message.content_detail))
+                    file_played = self._play_audio_file_or_fallback(
+                        message,
+                        audio_handler=lambda audio_data: self.handle_audio_file(
+                            audio_data, message.content_detail
+                        ),
+                        fallback_handler=lambda text: asyncio.run_coroutine_threadsafe(
+                            self.text_to_speak(text, None), loop=self.conn.loop
+                        ).result(timeout=self.tts_timeout),
+                    )
+                    if file_played:
+                        self._restart_duplex_session_after_file(
+                            self.task_id,
+                            self.finish_session,
+                            self.start_session,
+                        )
                 if message.sentence_type == SentenceType.LAST:
                     try:
                         logger.bind(tag=TAG).debug("开始结束TTS会话...")
@@ -456,6 +468,7 @@ class TTSProvider(TTSProviderBase):
                                 logger.bind(tag=TAG).debug(f"会话结束～～")
                                 self.activate_session = False
                                 self._process_before_stop_play_files()
+                                self._mark_duplex_session_finished()
                         except json.JSONDecodeError:
                             logger.bind(tag=TAG).warning("收到无效的JSON消息")
                     # 二进制消息（音频数据）

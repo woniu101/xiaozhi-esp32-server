@@ -33,6 +33,8 @@ import xiaozhi.modules.agent.service.AgentPluginMappingService;
 import xiaozhi.modules.agent.service.AgentService;
 import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.correctword.service.CorrectWordFileService;
+import xiaozhi.modules.characterstyle.entity.CharacterStyleEntity;
+import xiaozhi.modules.characterstyle.service.CharacterStyleService;
 import xiaozhi.modules.agent.vo.AgentVoicePrintVO;
 import xiaozhi.modules.correctword.vo.CorrectWordSimpleVO;
 import xiaozhi.modules.config.service.ConfigService;
@@ -63,6 +65,7 @@ public class ConfigServiceImpl implements ConfigService {
     private final VoiceCloneService cloneVoiceService;
     private final AgentVoicePrintDao agentVoicePrintDao;
     private final CorrectWordFileService correctWordFileService;
+    private final CharacterStyleService characterStyleService;
 
     @Override
     public Map<String, Object> getConfig(Boolean isCache) {
@@ -220,6 +223,10 @@ public class ConfigServiceImpl implements ConfigService {
         // 获取声纹信息
         buildVoiceprintConfig(agent.getId(), result);
 
+        // 原角色介绍继续作为 prompt 下发并保存在数据库；人物风格作为独立块下发，
+        // 由 xiaozhi-server 在连接初始化时执行运行时二选一。
+        buildCharacterStyleConfig(agent, result);
+
         // 构建模块配置
         buildModuleConfig(
                 agent.getAgentName(),
@@ -245,6 +252,32 @@ public class ConfigServiceImpl implements ConfigService {
                 true);
 
         return result;
+    }
+
+    private void buildCharacterStyleConfig(AgentEntity agent, Map<String, Object> result) {
+        if (StringUtils.isBlank(agent.getCharacterStyleId())) {
+            return;
+        }
+        CharacterStyleEntity style = characterStyleService.getOwned(
+                agent.getUserId(), agent.getCharacterStyleId());
+        String assistantName = StringUtils.defaultIfBlank(agent.getAgentName(), "小智");
+        String resolvedPrompt = style.getResolvedPrompt();
+        if (StringUtils.isNotBlank(resolvedPrompt)) {
+            resolvedPrompt = resolvedPrompt.replace("{{assistant_name}}", assistantName);
+        }
+        Map<String, Object> runtime = new HashMap<>();
+        runtime.put("active", true);
+        runtime.put("id", style.getId());
+        runtime.put("name", style.getName());
+        runtime.put("source_hash", style.getSourceHash());
+        runtime.put("resolved_prompt", resolvedPrompt);
+        runtime.put("asset_root", "character_styles/" + style.getId());
+        if (StringUtils.isNotBlank(style.getSignatureConfig())) {
+            runtime.put("signature_config", JsonUtils.parseMap(style.getSignatureConfig()));
+        } else {
+            runtime.put("signature_config", Map.of("enabled", false, "items", List.of()));
+        }
+        result.put("character_style", runtime);
     }
 
     @Override

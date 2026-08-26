@@ -4,6 +4,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 import xiaozhi.common.dao.BaseDao;
 import xiaozhi.modules.agent.entity.AgentEntity;
 import xiaozhi.modules.agent.vo.AgentInfoVO;
@@ -52,4 +53,11 @@ public interface AgentDao extends BaseDao<AgentEntity> {
      * @return 受影响行数
      */
     int updateSnapshotFields(@Param("agent") AgentEntity agent);
+
+    @Update("UPDATE ai_agent SET character_style_id = #{styleId,jdbcType=VARCHAR}, "
+            + "updater = #{userId}, updated_at = NOW() WHERE id = #{agentId} AND user_id = #{userId}")
+    int updateCharacterStyleBinding(
+            @Param("agentId") String agentId,
+            @Param("styleId") String styleId,
+            @Param("userId") Long userId);
 }

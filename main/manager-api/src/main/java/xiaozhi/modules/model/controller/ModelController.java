@@ -1,6 +1,7 @@
 package xiaozhi.modules.model.controller;
 
 import java.util.List;
+import java.util.Map;
 
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,6 +23,7 @@ import xiaozhi.common.utils.Result;
 import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.config.service.ConfigService;
 import xiaozhi.modules.model.dto.LlmModelBasicInfoDTO;
+import xiaozhi.modules.model.dto.IndexTtsConnectionTestDTO;
 import xiaozhi.modules.model.dto.ModelBasicInfoDTO;
 import xiaozhi.modules.model.dto.ModelConfigBodyDTO;
 import xiaozhi.modules.model.dto.ModelConfigDTO;
@@ -30,6 +32,7 @@ import xiaozhi.modules.model.dto.VoiceDTO;
 import xiaozhi.modules.model.entity.ModelConfigEntity;
 import xiaozhi.modules.model.service.ModelConfigService;
 import xiaozhi.modules.model.service.ModelProviderService;
+import xiaozhi.modules.model.service.IndexTtsConnectionTester;
 import xiaozhi.modules.timbre.service.TimbreService;
 
 @AllArgsConstructor
@@ -43,6 +46,14 @@ public class ModelController {
     private final ModelConfigService modelConfigService;
     private final ConfigService configService;
     private final AgentTemplateService agentTemplateService;
+    private final IndexTtsConnectionTester indexTtsConnectionTester;
+
+    @PostMapping("/index-tts-v2-5/test")
+    @Operation(summary = "测试 IndexTTS2.5 健康、普通 WAV 和流式接口")
+    @RequiresPermissions("sys:role:superAdmin")
+    public Result<Map<String, Object>> testIndexTtsConnection(@RequestBody IndexTtsConnectionTestDTO request) {
+        return new Result<Map<String, Object>>().ok(indexTtsConnectionTester.test(request.getConfigJson()));
+    }
 
     @GetMapping("/names")
     @Operation(summary = "获取所有模型名称")

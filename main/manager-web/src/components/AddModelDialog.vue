@@ -75,13 +75,28 @@
 
       <el-form :model="formData.configJson" label-width="auto" label-position="left" class="custom-form">
         <div v-for="(row, rowIndex) in chunkedCallInfoFields" :key="rowIndex" class="form-row">
-          <el-form-item v-for="field in row" :key="field.prop" :label="field.label" :prop="field.prop" style="flex: 1;">
-            <el-input v-model="formData.configJson[field.prop]" :placeholder="field.placeholder"
+          <el-form-item v-for="field in row" :key="field.prop"
+            :label="isIndexTts && field.prop === 'streaming' ? '' : field.label"
+            :prop="field.prop" :class="{ 'index-streaming-inline-item': isIndexTts && field.prop === 'streaming' }"
+            style="flex: 1;">
+            <div v-if="isIndexTts && field.prop === 'streaming'" class="index-streaming-inline">
+              <span>{{ field.label }}</span>
+              <el-switch v-model="formData.configJson[field.prop]" />
+              <el-tooltip :content="$t('modelConfigDialog.indexStreamingHelp')" placement="top">
+                <i class="el-icon-question index-streaming-help-icon" />
+              </el-tooltip>
+            </div>
+            <el-switch v-else-if="field.type === 'boolean'" v-model="formData.configJson[field.prop]"></el-switch>
+            <el-input v-else v-model="formData.configJson[field.prop]" :placeholder="field.placeholder"
               :type="field.type || 'text'" class="custom-input-bg" :show-password="field.type === 'password'">
             </el-input>
           </el-form-item>
         </div>
       </el-form>
+      <IndexTtsConnectionTest
+        v-if="isIndexTts"
+        :config-json="formData.configJson"
+      />
     </div>
   </CustomDialog>
 </template>
@@ -89,10 +104,12 @@
 <script>
 import Api from '@/apis/api';
 import CustomDialog from './CustomDialog.vue';
+import IndexTtsConnectionTest from './IndexTtsConnectionTest.vue';
 export default {
   name: 'AddModelDialog',
   components: {
-    CustomDialog
+    CustomDialog,
+    IndexTtsConnectionTest
   },
   props: {
     visible: { type: Boolean, required: true },
@@ -139,6 +156,9 @@ export default {
     dynamicCallInfoFields() {
       return this.providerFields;
     },
+    isIndexTts() {
+      return this.formData.supplier === 'index_tts_v2_5';
+    },
     chunkedCallInfoFields() {
       const chunkSize = 2;
       const result = [];
@@ -160,7 +180,13 @@ export default {
           fields: JSON.parse(item.fields || '[]').map(f => ({
             label: f.label,
             prop: f.key,
-            type: f.type === 'password' ? 'password' : 'text',
+            type: f.type === 'password'
+              ? 'password'
+              : f.type === 'boolean'
+                ? 'boolean'
+                : f.type === 'number'
+                  ? 'number'
+                  : 'text',
             placeholder: `请输入${f.key}`
           }))
         }))
@@ -170,7 +196,7 @@ export default {
     initConfigJson() {
       const defaultConfig = {};
       this.providerFields.forEach(field => {
-        defaultConfig[field.prop] = '';
+        defaultConfig[field.prop] = field.type === 'boolean' ? false : '';
       });
       this.formData.configJson = { ...defaultConfig };
     },
@@ -183,7 +209,10 @@ export default {
     initDynamicConfig() {
       const newConfig = {};
       this.providerFields.forEach(field => {
-        newConfig[field.prop] = this.formData.configJson[field.prop] || '';
+        const currentValue = this.formData.configJson[field.prop];
+        newConfig[field.prop] = currentValue !== undefined
+          ? currentValue
+          : field.type === 'boolean' ? false : '';
       });
       this.formData.configJson = newConfig;
     },
@@ -339,6 +368,20 @@ export default {
     gap: 20px;
     margin-bottom: 0;
   }
+
+  ::v-deep .index-streaming-inline-item .el-form-item__content {
+    margin-left: 0 !important;
+  }
+
+  .index-streaming-inline {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+    color: #606266;
+  }
+
+  .index-streaming-help-icon { color: #8791a8; cursor: help; }
 
   .dialog-footer {
     display: flex;

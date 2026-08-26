@@ -18,12 +18,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.modules.agent.dao.AgentVoicePrintDao;
+import xiaozhi.modules.agent.entity.AgentEntity;
 import xiaozhi.modules.agent.service.AgentContextProviderService;
 import xiaozhi.modules.agent.service.AgentMcpAccessPointService;
 import xiaozhi.modules.agent.service.AgentPluginMappingService;
 import xiaozhi.modules.agent.service.AgentService;
 import xiaozhi.modules.agent.service.AgentTemplateService;
 import xiaozhi.modules.correctword.service.CorrectWordFileService;
+import xiaozhi.modules.characterstyle.service.CharacterStyleService;
+import xiaozhi.modules.characterstyle.entity.CharacterStyleEntity;
 import xiaozhi.modules.device.service.DeviceService;
 import xiaozhi.modules.model.service.ModelConfigService;
 import xiaozhi.modules.sys.dto.SysParamsDTO;
@@ -69,6 +72,36 @@ class ConfigServiceImplTest {
         assertEquals(List.of("first", "second"), features.get("labels"));
     }
 
+    @Test
+    void boundCharacterStyleIsExposedAsAnIndependentRuntimeBlock() {
+        CharacterStyleService characterStyleService = mock(CharacterStyleService.class);
+        CharacterStyleEntity style = new CharacterStyleEntity();
+        style.setId("rabbit");
+        style.setName("兔娘");
+        style.setSourceHash("abc123");
+        style.setResolvedPrompt("你是 {{assistant_name}}。\n# 原始章节");
+        style.setSignatureConfig("{\"enabled\":false,\"items\":[]}");
+        when(characterStyleService.getOwned(7L, "rabbit")).thenReturn(style);
+        ConfigServiceImpl service = newService(
+                mock(SysParamsService.class), mock(RedisUtils.class), characterStyleService);
+        AgentEntity agent = new AgentEntity();
+        agent.setId("agent-1");
+        agent.setUserId(7L);
+        agent.setAgentName("小兔");
+        agent.setCharacterStyleId("rabbit");
+        Map<String, Object> result = new HashMap<>();
+
+        ReflectionTestUtils.invokeMethod(service, "buildCharacterStyleConfig", agent, result);
+
+        Map<?, ?> runtime = assertInstanceOf(Map.class, result.get("character_style"));
+        assertEquals(true, runtime.get("active"));
+        assertEquals("你是 小兔。\n# 原始章节", runtime.get("resolved_prompt"));
+        assertEquals("character_styles/rabbit", runtime.get("asset_root"));
+        assertEquals("abc123", runtime.get("source_hash"));
+        Map<?, ?> signatures = assertInstanceOf(Map.class, runtime.get("signature_config"));
+        assertEquals(false, signatures.get("enabled"));
+    }
+
     private static SysParamsDTO parameter(String code, String value, String type) {
         SysParamsDTO parameter = new SysParamsDTO();
         parameter.setParamCode(code);
@@ -78,6 +111,13 @@ class ConfigServiceImplTest {
     }
 
     private static ConfigServiceImpl newService(SysParamsService sysParamsService, RedisUtils redisUtils) {
+        return newService(sysParamsService, redisUtils, mock(CharacterStyleService.class));
+    }
+
+    private static ConfigServiceImpl newService(
+            SysParamsService sysParamsService,
+            RedisUtils redisUtils,
+            CharacterStyleService characterStyleService) {
         return new ConfigServiceImpl(
                 sysParamsService,
                 mock(DeviceService.class),
@@ -91,6 +131,7 @@ class ConfigServiceImplTest {
                 mock(AgentContextProviderService.class),
                 mock(VoiceCloneService.class),
                 mock(AgentVoicePrintDao.class),
-                mock(CorrectWordFileService.class));
+                mock(CorrectWordFileService.class),
+                characterStyleService);
     }
 }

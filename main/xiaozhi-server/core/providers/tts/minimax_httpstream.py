@@ -114,9 +114,20 @@ class TTSProvider(TTSProviderBase):
                     logger.bind(tag=TAG).info(
                         f"添加音频文件到待播放列表: {message.content_file}"
                     )
-                    if message.content_file and os.path.exists(message.content_file):
-                        # 先处理文件音频数据
-                        self._process_audio_file_stream(message.content_file, callback=lambda audio_data: self.handle_audio_file(audio_data, message.content_detail))
+                    full_text = "".join(self.tts_text_buff)
+                    if len(full_text) > self.processed_chars:
+                        remaining = full_text[self.processed_chars :]
+                        segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining)
+                        if segment_text:
+                            self.to_tts_single_stream(segment_text)
+                        self.processed_chars = len(full_text)
+                    self._play_audio_file_or_fallback(
+                        message,
+                        audio_handler=lambda audio_data: self.handle_audio_file(
+                            audio_data, message.content_detail
+                        ),
+                        fallback_handler=lambda text: self.to_tts_single_stream(text),
+                    )
                 if message.sentence_type == SentenceType.LAST:
                     # 处理剩余的文本
                     self._process_remaining_text_stream(True)
@@ -139,7 +150,7 @@ class TTSProvider(TTSProviderBase):
             segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining_text)
             if segment_text:
                 self.to_tts_single_stream(segment_text, is_last)
-                self.processed_chars += len(full_text)
+                self.processed_chars = len(full_text)
             else:
                 self._process_before_stop_play_files()
         else:

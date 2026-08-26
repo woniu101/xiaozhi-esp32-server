@@ -43,6 +43,10 @@ renren:
     enabled: true
     exclude-urls:
 
+character-style:
+  # 与 xiaozhi-server 的 data/character_styles 共享，用于当前源码快照和招牌录音。
+  storage-root: ${CHARACTER_STYLE_DIR:/opt/xiaozhi-esp32-server/data/character_styles}
+
 #mybatis
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml

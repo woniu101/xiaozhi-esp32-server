@@ -13,12 +13,14 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.web.client.RestTemplate;
 
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import lombok.extern.slf4j.Slf4j;
+import xiaozhi.common.exception.RenException;
 import xiaozhi.modules.llm.service.LLMService;
 import xiaozhi.modules.model.entity.ModelConfigEntity;
 import xiaozhi.modules.model.service.ModelConfigService;
@@ -45,7 +47,10 @@ public class OpenAIStyleLLMServiceImpl implements LLMService {
     @Autowired
     private ModelConfigService modelConfigService;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = new RestTemplateBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10))
+            .readTimeout(java.time.Duration.ofSeconds(90))
+            .build();
 
     /**
      * 根据域名自动禁用思考模式
@@ -416,5 +421,73 @@ public class OpenAIStyleLLMServiceImpl implements LLMService {
         }
 
         return null;
+    }
+
+    @Override
+    public String generateReply(String systemPrompt, String userPrompt, String modelId) {
+        if (StringUtils.isBlank(systemPrompt) || StringUtils.isBlank(userPrompt)) {
+            throw new RenException("人物上下文试跑缺少提示词或用户输入");
+        }
+        try {
+            ModelConfigEntity llmConfig = StringUtils.isBlank(modelId)
+                    ? getDefaultLLMConfig()
+                    : modelConfigService.getModelByIdFromCache(modelId);
+            if (llmConfig == null || llmConfig.getConfigJson() == null) {
+                throw new RenException("智能体没有可用的主语言模型配置");
+            }
+
+            JSONObject configJson = llmConfig.getConfigJson();
+            String baseUrl = configJson.getStr("base_url");
+            String model = configJson.getStr("model_name");
+            String apiKey = configJson.getStr("api_key");
+            if (StringUtils.isBlank(baseUrl) || StringUtils.isBlank(apiKey)) {
+                throw new RenException("主语言模型的 API 地址或密钥未配置");
+            }
+
+            Map<String, Object> systemMessage = new HashMap<>();
+            systemMessage.put("role", "system");
+            systemMessage.put("content", systemPrompt);
+            Map<String, Object> userMessage = new HashMap<>();
+            userMessage.put("role", "user");
+            userMessage.put("content", userPrompt);
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", StringUtils.defaultIfBlank(model, "gpt-3.5-turbo"));
+            requestBody.put("messages", List.of(systemMessage, userMessage));
+            requestBody.put("temperature", configJson.getDouble("temperature", 0.7));
+            requestBody.put("max_tokens", Math.max(64, Math.min(configJson.getInt("max_tokens", 1000), 2000)));
+            applyThinkingDisabled(baseUrl, requestBody);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(apiKey);
+            String apiUrl = baseUrl;
+            if (!apiUrl.endsWith("/chat/completions")) {
+                apiUrl = apiUrl.endsWith("/") ? apiUrl + "chat/completions" : apiUrl + "/chat/completions";
+            }
+            ResponseEntity<String> response = restTemplate.exchange(
+                    apiUrl,
+                    HttpMethod.POST,
+                    new HttpEntity<>(requestBody, headers),
+                    String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RenException("主语言模型返回 HTTP " + response.getStatusCode().value());
+            }
+            JSONObject payload = JSONUtil.parseObj(response.getBody());
+            JSONArray choices = payload.getJSONArray("choices");
+            if (choices == null || choices.isEmpty()) {
+                throw new RenException("主语言模型没有返回试跑内容");
+            }
+            String content = choices.getJSONObject(0).getJSONObject("message").getStr("content");
+            if (StringUtils.isBlank(content)) {
+                throw new RenException("主语言模型返回了空内容");
+            }
+            return content.trim();
+        } catch (RenException error) {
+            throw error;
+        } catch (Exception error) {
+            log.error("人物上下文试跑调用主语言模型失败，modelId: {}", modelId, error);
+            throw new RenException("人物上下文试跑失败：" + error.getMessage(), error);
+        }
     }
 }

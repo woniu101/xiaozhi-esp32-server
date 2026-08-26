@@ -11,7 +11,10 @@ import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import xiaozhi.common.redis.RedisUtils;
+import xiaozhi.modules.model.service.ModelConfigService;
 import xiaozhi.modules.timbre.dao.TimbreDao;
 import xiaozhi.modules.timbre.dto.TimbreDataDTO;
 import xiaozhi.modules.timbre.entity.TimbreEntity;
@@ -25,7 +28,7 @@ class TimbreServiceImplTest {
     void defaultLanguageUsesFirstValidRegularTimbreLanguageWithoutCloneQuery() {
         TimbreDao timbreDao = mock(TimbreDao.class);
         VoiceCloneDao voiceCloneDao = mock(VoiceCloneDao.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(timbreDao, voiceCloneDao, mock(RedisUtils.class));
+        TimbreServiceImpl service = service(timbreDao, voiceCloneDao, mock(RedisUtils.class));
         TimbreEntity timbre = new TimbreEntity();
         timbre.setLanguages("，， ; 普通话；粤语");
         when(timbreDao.selectById("voice-id")).thenReturn(timbre);
@@ -39,7 +42,7 @@ class TimbreServiceImplTest {
     void defaultLanguageFallsBackToCloneTimbre() {
         TimbreDao timbreDao = mock(TimbreDao.class);
         VoiceCloneDao voiceCloneDao = mock(VoiceCloneDao.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(timbreDao, voiceCloneDao, mock(RedisUtils.class));
+        TimbreServiceImpl service = service(timbreDao, voiceCloneDao, mock(RedisUtils.class));
         VoiceCloneEntity voiceClone = new VoiceCloneEntity();
         voiceClone.setLanguages("、, English，中文");
         when(voiceCloneDao.selectById("clone-id")).thenReturn(voiceClone);
@@ -51,7 +54,7 @@ class TimbreServiceImplTest {
     void delimiterOnlyLanguageConfigurationReturnsNull() {
         TimbreDao timbreDao = mock(TimbreDao.class);
         VoiceCloneDao voiceCloneDao = mock(VoiceCloneDao.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(timbreDao, voiceCloneDao, mock(RedisUtils.class));
+        TimbreServiceImpl service = service(timbreDao, voiceCloneDao, mock(RedisUtils.class));
         TimbreEntity timbre = new TimbreEntity();
         timbre.setLanguages(",，、；;;,,");
         when(timbreDao.selectById("voice-id")).thenReturn(timbre);
@@ -63,7 +66,7 @@ class TimbreServiceImplTest {
     void updateLeavesSortOutOfTheUpdateWhenRequestOmitsIt() {
         TimbreDao timbreDao = mock(TimbreDao.class);
         RedisUtils redisUtils = mock(RedisUtils.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(timbreDao, mock(VoiceCloneDao.class), redisUtils);
+        TimbreServiceImpl service = service(timbreDao, mock(VoiceCloneDao.class), redisUtils);
         ReflectionTestUtils.setField(service, "baseDao", timbreDao);
 
         TimbreDataDTO dto = validTimbreData();
@@ -78,7 +81,7 @@ class TimbreServiceImplTest {
     @Test
     void updateUsesExplicitSortWithoutLoadingExistingTimbre() {
         TimbreDao timbreDao = mock(TimbreDao.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(
+        TimbreServiceImpl service = service(
                 timbreDao, mock(VoiceCloneDao.class), mock(RedisUtils.class));
         ReflectionTestUtils.setField(service, "baseDao", timbreDao);
         TimbreDataDTO dto = validTimbreData();
@@ -93,7 +96,7 @@ class TimbreServiceImplTest {
     @Test
     void saveDefaultsOmittedSortToZero() {
         TimbreDao timbreDao = mock(TimbreDao.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(
+        TimbreServiceImpl service = service(
                 timbreDao, mock(VoiceCloneDao.class), mock(RedisUtils.class));
         ReflectionTestUtils.setField(service, "baseDao", timbreDao);
 
@@ -107,7 +110,7 @@ class TimbreServiceImplTest {
     void getSupportsLegacyRowsWithNullSort() {
         TimbreDao timbreDao = mock(TimbreDao.class);
         RedisUtils redisUtils = mock(RedisUtils.class);
-        TimbreServiceImpl service = new TimbreServiceImpl(
+        TimbreServiceImpl service = service(
                 timbreDao, mock(VoiceCloneDao.class), redisUtils);
         ReflectionTestUtils.setField(service, "baseDao", timbreDao);
         TimbreEntity entity = new TimbreEntity();
@@ -127,5 +130,17 @@ class TimbreServiceImplTest {
         dto.setTtsModelId("TTS_Test");
         dto.setTtsVoice("test-voice");
         return dto;
+    }
+
+    private TimbreServiceImpl service(
+            TimbreDao timbreDao,
+            VoiceCloneDao voiceCloneDao,
+            RedisUtils redisUtils) {
+        return new TimbreServiceImpl(
+                timbreDao,
+                voiceCloneDao,
+                redisUtils,
+                mock(ModelConfigService.class),
+                new ObjectMapper());
     }
 }

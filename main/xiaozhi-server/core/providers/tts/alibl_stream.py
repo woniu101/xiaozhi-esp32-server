@@ -166,9 +166,21 @@ class TTSProvider(TTSProviderBase):
                     logger.bind(tag=TAG).info(
                         f"添加音频文件到待播放列表: {message.content_file}"
                     )
-                    if message.content_file and os.path.exists(message.content_file):
-                        # 先处理文件音频数据
-                        self._process_audio_file_stream(message.content_file, callback=lambda audio_data: self.handle_audio_file(audio_data, message.content_detail))
+                    file_played = self._play_audio_file_or_fallback(
+                        message,
+                        audio_handler=lambda audio_data: self.handle_audio_file(
+                            audio_data, message.content_detail
+                        ),
+                        fallback_handler=lambda text: asyncio.run_coroutine_threadsafe(
+                            self.text_to_speak(text, None), loop=self.conn.loop
+                        ).result(timeout=self.tts_timeout),
+                    )
+                    if file_played:
+                        self._restart_duplex_session_after_file(
+                            self.conn.sentence_id,
+                            self.finish_session,
+                            self.start_session,
+                        )
 
                 if message.sentence_type == SentenceType.LAST:
                     try:
@@ -372,12 +384,16 @@ class TTSProvider(TTSProviderBase):
                                 logger.bind(tag=TAG).debug("TTS任务完成~")
                                 self.activate_session = False
                                 self._process_before_stop_play_files()
+                                self._mark_duplex_session_finished()
                             elif event == "task-failed":
                                 error_code = header.get("error_code", "unknown")
                                 error_message = header.get("error_message", "未知错误")
                                 logger.bind(tag=TAG).error(
                                     f"TTS任务失败: {error_code} - {error_message}"
                                 )
+                                self.activate_session = False
+                                self._process_before_stop_play_files()
+                                self._mark_duplex_session_finished()
                                 break
                         except json.JSONDecodeError:
                             logger.bind(tag=TAG).warning("收到无效的JSON消息")

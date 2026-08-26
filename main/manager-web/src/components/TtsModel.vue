@@ -2,12 +2,33 @@
   <CustomDialog :visible.sync="localVisible" :title="$t('modelConfig.voiceManagement')" width="90%"
     :close-on-click-modal="true" :destroy-on-close="false" :footer="false" :append-to-body="true"
     @close="handleClose">
+    <div v-if="isIndexTts" class="index-voice-toolbar">
+      <div class="index-voice-toolbar-spacer" aria-hidden="true"></div>
+      <div class="index-voice-summary">
+        <div class="index-voice-title">IndexTTS2.5 远端音色库</div>
+        <div class="index-voice-description">
+          音色由 IndexTTS2.5 服务端管理，同步后才能在角色配置中选择。远端
+          {{ indexRemoteVoices.length }} 个，本地目录 {{ ttsModels.length }} 个。
+          <span v-if="indexUnsyncedCount > 0" class="index-warning">
+            {{ indexUnsyncedCount }} 个尚未同步
+          </span>
+        </div>
+      </div>
+      <div class="index-voice-toolbar-actions">
+        <el-button size="small" icon="el-icon-refresh" :loading="indexRemoteLoading" @click="loadIndexRemoteVoices">
+          刷新状态
+        </el-button>
+        <el-button size="small" type="primary" icon="el-icon-refresh-right" :loading="indexSyncing" @click="syncIndexRemoteVoices">
+          同步远端音色
+        </el-button>
+      </div>
+    </div>
     <div class="scroll-wrapper">
       <div class="table-container" ref="tableContainer" @scroll="handleScroll">
         <el-table v-loading="loading" :data="filteredTtsModels" style="width: 100%;" class="data-table"
           header-row-class-name="table-header" :fit="true" :element-loading-text="$t('voicePrint.loading')"
           element-loading-spinner="el-icon-loading" element-loading-background="rgba(0, 0, 0, 0.8)">
-          <el-table-column :label="$t('ttsModel.select')" width="50" align="center">
+          <el-table-column v-if="!isIndexTts" :label="$t('ttsModel.select')" width="50" align="center">
             <template slot-scope="scope">
               <el-checkbox v-model="scope.row.selected"></el-checkbox>
             </template>
@@ -30,7 +51,25 @@
               <span v-else>{{ scope.row.languageType }}</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="!showReferenceColumns" :label="$t('ttsModel.preview')" align="center" class-name="audio-column">
+          <el-table-column v-if="isIndexTts" label="远端状态" align="center" width="130">
+            <template slot-scope="scope">
+              <el-tag v-if="indexRemoteVoiceMap[scope.row.voiceCode]" size="mini"
+                :type="indexRemoteVoiceMap[scope.row.voiceCode].defaultVoice ? 'success' : ''">
+                {{ indexRemoteVoiceMap[scope.row.voiceCode].defaultVoice ? '默认音色' : '已注册' }}
+              </el-tag>
+              <el-tag v-else size="mini" type="danger">远端缺失</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isIndexTts" :label="$t('ttsModel.preview')" align="center" width="100"
+            class-name="audio-column index-preview-column">
+            <template slot-scope="scope">
+              <el-button type="text" size="mini" :loading="previewingVoiceId === scope.row.voiceCode"
+                :disabled="!indexRemoteVoiceMap[scope.row.voiceCode]" @click="previewIndexVoice(scope.row)">
+                {{ previewingVoiceId === scope.row.voiceCode ? '播放中' : '试听' }}
+              </el-button>
+            </template>
+          </el-table-column>
+          <el-table-column v-else-if="!showReferenceColumns" :label="$t('ttsModel.preview')" align="center" class-name="audio-column">
             <template slot-scope="scope">
               <div class="custom-audio-container">
                 <el-input v-if="scope.row.editing" v-model="scope.row.voiceDemo" :placeholder="$t('ttsModel.enterMp3Url')"
@@ -61,7 +100,15 @@
           </el-table-column>
           <el-table-column :label="$t('ttsModel.operation')" align="center" width="150">
             <template slot-scope="scope">
-              <template v-if="!scope.row.editing">
+              <template v-if="isIndexTts">
+                <el-button type="text" size="mini" @click="openIndexVoiceDialog(scope.row)">重新上传</el-button>
+                <el-button type="text" size="mini" class="delete-btn"
+                  :disabled="Boolean(indexRemoteVoiceMap[scope.row.voiceCode] && indexRemoteVoiceMap[scope.row.voiceCode].defaultVoice)"
+                  @click="deleteIndexVoice(scope.row)">
+                  {{ $t('ttsModel.delete') }}
+                </el-button>
+              </template>
+              <template v-else-if="!scope.row.editing">
                 <el-button type="text" size="mini" @click="startEdit(scope.row)" class="edit-btn">
                     {{ $t('ttsModel.edit') }}
                   </el-button>
@@ -89,7 +136,12 @@
         </div>
       </div>
     </div>
-    <div class="action-buttons">
+    <div v-if="isIndexTts" class="action-buttons">
+      <CustomButton icon="el-icon-upload2" size="small" type="add" @click="openIndexVoiceDialog()">
+        上传并注册音色
+      </CustomButton>
+    </div>
+    <div v-else class="action-buttons">
       <CustomButton :icon="selectAll ? 'el-icon-circle-close' : 'el-icon-circle-check'" size="small" type="default" @click="toggleSelectAll">
         {{ selectAll ? $t('ttsModel.deselectAll') : $t('ttsModel.selectAll') }}
       </CustomButton>
@@ -100,6 +152,42 @@
         {{ $t('ttsModel.delete') }}
       </CustomButton>
     </div>
+
+    <el-dialog title="注册 IndexTTS2.5 音色" :visible.sync="indexVoiceDialogVisible" width="540px"
+      append-to-body :close-on-click-modal="false" @closed="resetIndexVoiceForm">
+      <el-alert title="上传的 WAV 会作为 IndexTTS2.5 参考音频；注册成功后会自动同步到本地音色目录。"
+        type="info" :closable="false" show-icon class="index-upload-alert" />
+      <el-form label-width="115px">
+        <el-form-item label="Voice ID" required>
+          <el-input v-model.trim="indexVoiceForm.voiceId" maxlength="80"
+            :disabled="Boolean(indexVoiceForm.originalVoiceId)" placeholder="例如：tuniang-soft" />
+          <div class="index-form-tip">只能使用字母、数字、点、下划线和连字符。</div>
+        </el-form-item>
+        <el-form-item label="音色名称" required>
+          <el-input v-model.trim="indexVoiceForm.name" maxlength="100" placeholder="例如：兔娘温柔音" />
+        </el-form-item>
+        <el-form-item label="语言" required>
+          <el-input v-model.trim="indexVoiceForm.languages" maxlength="100" placeholder="普通话" />
+        </el-form-item>
+        <el-form-item label="参考音频文本">
+          <el-input v-model.trim="indexVoiceForm.promptText" type="textarea" :rows="2" maxlength="500"
+            show-word-limit placeholder="可选，用于记录参考音频中说了什么" />
+        </el-form-item>
+        <el-form-item label="参考音频" required>
+          <el-upload drag action="#" accept=".wav,audio/wav" :auto-upload="false" :limit="1"
+            :file-list="indexVoiceFileList" :on-change="handleIndexVoiceFileChange"
+            :on-remove="handleIndexVoiceFileRemove" :on-exceed="handleIndexVoiceFileExceed">
+            <i class="el-icon-upload"></i>
+            <div class="el-upload__text">拖入 WAV 文件，或<em>点击选择</em></div>
+            <div class="el-upload__tip" slot="tip">仅支持 WAV，最大 20MB。重新上传会更新同一 Voice ID。</div>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <span slot="footer" class="dialog-footer">
+        <el-button @click="indexVoiceDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="indexRegistering" @click="registerIndexVoice">上传并注册</el-button>
+      </span>
+    </el-dialog>
   </CustomDialog>
 </template>
 
@@ -142,6 +230,24 @@ export default {
       selectedRows: [],
       loading: false,
       showReferenceColumns: false, // 控制是否显示参考列
+      indexRemoteVoices: [],
+      indexRemoteLoading: false,
+      indexSyncing: false,
+      indexVoiceDialogVisible: false,
+      indexRegistering: false,
+      indexVoiceFile: null,
+      indexVoiceFileList: [],
+      indexVoiceForm: {
+        originalVoiceId: '',
+        voiceId: '',
+        name: '',
+        languages: '普通话',
+        promptText: ''
+      },
+      previewingVoiceId: '',
+      previewAudioContext: null,
+      previewAudioSource: null,
+      previewRequestId: 0
     };
   },
   watch: {
@@ -151,6 +257,7 @@ export default {
         this.currentPage = 1;
         this.updateShowReferenceColumns(); // 更新显示状态
         this.loadData(); // 对话框显示时加载数据
+        if (this.isIndexTts) this.loadIndexRemoteVoices();
         this.$nextTick(() => {
           this.updateScrollbar();
         });
@@ -169,6 +276,19 @@ export default {
     }
   },
   computed: {
+    isIndexTts() {
+      return Boolean(this.modelConfig && this.modelConfig.configJson
+        && this.modelConfig.configJson.type === 'index_tts_v2_5');
+    },
+    indexRemoteVoiceMap() {
+      return this.indexRemoteVoices.reduce((result, voice) => {
+        result[voice.voiceId] = voice;
+        return result;
+      }, {});
+    },
+    indexUnsyncedCount() {
+      return this.indexRemoteVoices.filter(voice => !voice.synced).length;
+    },
     filteredTtsModels() {
       return this.ttsModels.filter(model =>
         model.voiceName.toLowerCase().includes(this.searchQuery.toLowerCase())
@@ -182,6 +302,11 @@ export default {
     window.addEventListener('mousemove', this.handleDrag);
   },
   beforeDestroy() {
+    this.stopIndexPreview();
+    if (this.previewAudioContext) {
+      this.previewAudioContext.close().catch(() => {});
+      this.previewAudioContext = null;
+    }
     window.removeEventListener('resize', this.updateScrollbar);
     window.removeEventListener('mouseup', this.stopDrag);
     window.removeEventListener('mousemove', this.handleDrag);
@@ -195,6 +320,257 @@ export default {
       } else {
         this.showReferenceColumns = false;
       }
+    },
+
+    indexErrorMessage(error, fallback) {
+      return error?.data?.msg || error?.response?.data?.msg || error?.msg || fallback;
+    },
+
+    loadIndexRemoteVoices() {
+      if (!this.isIndexTts || this.indexRemoteLoading) return;
+      this.indexRemoteLoading = true;
+      Api.timbre.getIndexRemoteVoices(this.ttsModelId, (result) => {
+        this.indexRemoteLoading = false;
+        if (result && result.code === 0) {
+          this.indexRemoteVoices = Array.isArray(result.data) ? result.data : [];
+        } else {
+          this.$message.error(result?.msg || '读取远端音色失败');
+        }
+      }, (error) => {
+        this.indexRemoteLoading = false;
+        this.$message.error(this.indexErrorMessage(error, '无法连接 IndexTTS2.5 音色服务'));
+      });
+    },
+
+    syncIndexRemoteVoices() {
+      if (this.indexSyncing) return;
+      this.indexSyncing = true;
+      Api.timbre.syncIndexRemoteVoices(this.ttsModelId, (result) => {
+        this.indexSyncing = false;
+        if (result && result.code === 0) {
+          this.indexRemoteVoices = Array.isArray(result.data) ? result.data : [];
+          this.$message.success(`已同步 ${this.indexRemoteVoices.length} 个远端音色`);
+          this.loadData();
+        } else {
+          this.$message.error(result?.msg || '同步远端音色失败');
+        }
+      }, (error) => {
+        this.indexSyncing = false;
+        this.$message.error(this.indexErrorMessage(error, '同步远端音色失败'));
+      });
+    },
+
+    openIndexVoiceDialog(row = null) {
+      this.resetIndexVoiceForm();
+      if (row) {
+        const remote = this.indexRemoteVoiceMap[row.voiceCode] || {};
+        this.indexVoiceForm = {
+          originalVoiceId: row.voiceCode,
+          voiceId: row.voiceCode,
+          name: row.voiceName,
+          languages: row.languageType || '普通话',
+          promptText: remote.promptText || ''
+        };
+      }
+      this.indexVoiceDialogVisible = true;
+    },
+
+    resetIndexVoiceForm() {
+      this.indexVoiceForm = {
+        originalVoiceId: '',
+        voiceId: '',
+        name: '',
+        languages: '普通话',
+        promptText: ''
+      };
+      this.indexVoiceFile = null;
+      this.indexVoiceFileList = [];
+      this.indexRegistering = false;
+    },
+
+    handleIndexVoiceFileChange(file) {
+      const raw = file && file.raw;
+      const isWav = raw && (raw.type === 'audio/wav' || /\.wav$/i.test(raw.name || ''));
+      if (!isWav) {
+        this.$message.error('只能上传 WAV 参考音频');
+        this.indexVoiceFile = null;
+        this.indexVoiceFileList = [];
+        return;
+      }
+      if (raw.size > 20 * 1024 * 1024) {
+        this.$message.error('参考音频不能超过 20MB');
+        this.indexVoiceFile = null;
+        this.indexVoiceFileList = [];
+        return;
+      }
+      this.indexVoiceFile = raw;
+      this.indexVoiceFileList = [file];
+    },
+
+    handleIndexVoiceFileRemove() {
+      this.indexVoiceFile = null;
+      this.indexVoiceFileList = [];
+    },
+
+    handleIndexVoiceFileExceed() {
+      this.$message.warning('请先移除当前文件，再选择新的 WAV 音频');
+    },
+
+    registerIndexVoice() {
+      const { voiceId, name, languages, promptText } = this.indexVoiceForm;
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(voiceId)) {
+        this.$message.error('Voice ID 格式不正确');
+        return;
+      }
+      if (!name || !languages) {
+        this.$message.error('请填写音色名称和语言');
+        return;
+      }
+      if (!this.indexVoiceFile) {
+        this.$message.error('请选择 WAV 参考音频');
+        return;
+      }
+      const formData = new FormData();
+      formData.append('voiceId', voiceId);
+      formData.append('name', name);
+      formData.append('languages', languages);
+      formData.append('promptText', promptText || '');
+      formData.append('audio', this.indexVoiceFile, this.indexVoiceFile.name);
+      this.indexRegistering = true;
+      Api.timbre.registerIndexVoice(this.ttsModelId, formData, (result) => {
+        this.indexRegistering = false;
+        if (result && result.code === 0) {
+          this.$message.success('音色已上传、注册并同步');
+          this.indexVoiceDialogVisible = false;
+          this.loadData();
+          this.loadIndexRemoteVoices();
+        } else {
+          this.$message.error(result?.msg || '音色注册失败');
+        }
+      }, (error) => {
+        this.indexRegistering = false;
+        this.$message.error(this.indexErrorMessage(error, '音色注册失败'));
+      });
+    },
+
+    deleteIndexVoice(row) {
+      const remote = this.indexRemoteVoiceMap[row.voiceCode];
+      if (remote && remote.defaultVoice) {
+        this.$message.warning('默认音色不能删除');
+        return;
+      }
+      this.$confirm(`确认同时删除远端音色“${row.voiceName}”和本地目录记录吗？`, '删除音色', {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }).then(() => {
+        Api.timbre.deleteIndexVoice(this.ttsModelId, row.voiceCode, (result) => {
+          if (result && result.code === 0) {
+            this.$message.success('音色已删除');
+            this.loadData();
+            this.loadIndexRemoteVoices();
+          } else {
+            this.$message.error(result?.msg || '音色删除失败');
+          }
+        }, (error) => {
+          this.$message.error(this.indexErrorMessage(error, '音色删除失败'));
+        });
+      }).catch(() => {});
+    },
+
+    previewIndexVoice(row) {
+      if (this.previewingVoiceId === row.voiceCode) {
+        this.stopIndexPreview();
+        return;
+      }
+      this.stopIndexPreview();
+      this.previewingVoiceId = row.voiceCode;
+      const requestId = this.previewRequestId;
+      this.ensureIndexPreviewAudioContext().then(() => {
+        if (requestId !== this.previewRequestId) return;
+        Api.timbre.previewIndexVoice(this.ttsModelId, {
+          voiceId: row.voiceCode,
+          text: `你好，我是${row.voiceName}，这是一段音色试听。`
+        }, (response) => {
+          this.playIndexPreviewResponse(response, requestId);
+        }, (error) => {
+          if (requestId !== this.previewRequestId) return;
+          this.stopIndexPreview();
+          this.$message.error(this.indexErrorMessage(error, '音色试听失败'));
+        });
+      }).catch((error) => {
+        if (requestId !== this.previewRequestId) return;
+        this.stopIndexPreview();
+        this.$message.error(`浏览器音频设备初始化失败：${error?.message || '未知错误'}`);
+      });
+    },
+
+    ensureIndexPreviewAudioContext() {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return Promise.reject(new Error('当前浏览器不支持 Web Audio'));
+      if (!this.previewAudioContext || this.previewAudioContext.state === 'closed') {
+        this.previewAudioContext = new AudioContextClass();
+      }
+      return this.previewAudioContext.state === 'suspended'
+        ? this.previewAudioContext.resume()
+        : Promise.resolve();
+    },
+
+    async playIndexPreviewResponse(response, requestId) {
+      if (requestId !== this.previewRequestId) return;
+      try {
+        const payload = response && response.data;
+        let audioData;
+        if (payload instanceof ArrayBuffer) {
+          audioData = payload;
+        } else if (ArrayBuffer.isView(payload)) {
+          audioData = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength);
+        } else if (typeof Blob !== 'undefined' && payload instanceof Blob) {
+          audioData = await payload.arrayBuffer();
+        } else {
+          throw new Error('接口未返回二进制音频');
+        }
+        if (requestId !== this.previewRequestId) return;
+        const header = new Uint8Array(audioData, 0, Math.min(audioData.byteLength, 12));
+        const isWav = header.length >= 12
+          && String.fromCharCode(...header.slice(0, 4)) === 'RIFF'
+          && String.fromCharCode(...header.slice(8, 12)) === 'WAVE';
+        if (!isWav) throw new Error('接口返回内容不是有效的 WAV 音频');
+
+        const decoded = await this.previewAudioContext.decodeAudioData(audioData.slice(0));
+        if (requestId !== this.previewRequestId) return;
+        const source = this.previewAudioContext.createBufferSource();
+        source.buffer = decoded;
+        source.connect(this.previewAudioContext.destination);
+        source.onended = () => {
+          if (this.previewAudioSource === source) {
+            source.disconnect();
+            this.previewAudioSource = null;
+            this.previewingVoiceId = '';
+          }
+        };
+        this.previewAudioSource = source;
+        source.start(0);
+      } catch (error) {
+        if (requestId !== this.previewRequestId) return;
+        this.stopIndexPreview();
+        this.$message.error(`试听音频解码失败：${error?.message || '未知错误'}`);
+      }
+    },
+
+    stopIndexPreview() {
+      this.previewRequestId += 1;
+      if (this.previewAudioSource) {
+        this.previewAudioSource.onended = null;
+        try {
+          this.previewAudioSource.stop(0);
+        } catch (error) {
+          // 已经自然结束的 AudioBufferSourceNode 可安全忽略重复 stop。
+        }
+        this.previewAudioSource.disconnect();
+        this.previewAudioSource = null;
+      }
+      this.previewingVoiceId = '';
     },
 
     loadData() {
@@ -248,6 +624,8 @@ export default {
       this.selectAll = false;
       this.searchQuery = '';
       this.showReferenceColumns = false;
+      this.indexRemoteVoices = [];
+      this.stopIndexPreview();
 
       this.localVisible = false;
       this.$emit('update:visible', false);
@@ -532,6 +910,58 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+.index-voice-toolbar {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, auto) 1fr;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #dce8ff;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.index-voice-summary {
+  text-align: center;
+}
+
+.index-voice-title {
+  margin-bottom: 4px;
+  color: #263b66;
+  font-weight: 600;
+}
+
+.index-voice-description,
+.index-form-tip {
+  color: #8791a8;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.index-warning {
+  margin-left: 8px;
+  color: #e6a23c;
+}
+
+.index-voice-toolbar-actions {
+  display: flex;
+  flex-shrink: 0;
+  justify-self: end;
+  gap: 8px;
+}
+
+@media (max-width: 1100px) {
+  .index-voice-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .index-voice-toolbar-spacer { display: none; }
+  .index-voice-toolbar-actions { justify-self: center; }
+}
+
+.index-upload-alert { margin-bottom: 18px; }
+
 /* 表格样式 */
 ::v-deep .data-table .el-table__header th {
   color: black;

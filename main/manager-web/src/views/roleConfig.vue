@@ -94,12 +94,25 @@
                           v-for="(template, index) in templates"
                           :key="`template-${index}`"
                           class="template-item"
-                          :class="{ 'template-loading': loadingTemplate }"
+                          :class="{ 'template-loading': loadingTemplate, 'template-disabled': hasCharacterStyle }"
                           @click="selectTemplate(template)"
                         >
                           {{ template.agentName }}
                         </div>
                       </div>
+                    </el-form-item>
+                    <el-form-item>
+                      <template #label>
+                        <el-tooltip :content="$t('characterStyle.tooltip')" placement="top" effect="light" popper-class="custom-tooltip">
+                          <span>{{ $t('characterStyle.title') }}：</span>
+                        </el-tooltip>
+                      </template>
+                      <character-style-panel
+                        v-if="$route.query.agentId"
+                        :agent-id="String($route.query.agentId)"
+                        :bound-style-id="form.characterStyleId || ''"
+                        @binding-changed="handleCharacterStyleBindingChanged"
+                      />
                     </el-form-item>
                     <el-form-item class="context-provider-item">
                       <template #label>
@@ -135,7 +148,11 @@
                         maxlength="2000"
                         show-word-limit
                         class="form-textarea"
+                        :disabled="hasCharacterStyle"
                       />
+                      <div v-if="hasCharacterStyle" class="role-prompt-preserved-notice">
+                        {{ $t('characterStyle.rolePromptPreserved') }}
+                      </div>
                     </el-form-item>
 
                     <el-form-item>
@@ -493,6 +510,7 @@ import FunctionDialog from "@/components/FunctionDialog.vue";
 import ContextProviderDialog from "@/components/ContextProviderDialog.vue";
 import TtsAdvancedSettings from "@/components/TtsAdvancedSettings.vue";
 import AgentSnapshotDialog from "@/components/AgentSnapshotDialog.vue";
+import CharacterStylePanel from "@/components/CharacterStylePanel.vue";
 import HeaderBar from "@/components/HeaderBar.vue";
 import i18n from "@/i18n";
 import featureManager from "@/utils/featureManager"; 
@@ -500,7 +518,7 @@ import VersionFooter from "@/components/VersionFooter.vue";
 
 export default {
   name: "RoleConfigPage",
-  components: { HeaderBar, FunctionDialog, ContextProviderDialog, TtsAdvancedSettings, AgentSnapshotDialog, VersionFooter },
+  components: { HeaderBar, FunctionDialog, ContextProviderDialog, TtsAdvancedSettings, AgentSnapshotDialog, CharacterStylePanel, VersionFooter },
   data() {
     return {
       showContextProviderDialog: false,
@@ -521,6 +539,7 @@ export default {
         ttsPitch: null,
         chatHistoryConf: 0,
         systemPrompt: "",
+        characterStyleId: null,
         summaryMemory: "",
         langCode: "",
         language: "",
@@ -594,6 +613,9 @@ export default {
     };
   },
   computed: {
+    hasCharacterStyle() {
+      return Boolean(this.form.characterStyleId);
+    },
     configInteractionBlocked() {
       return this.agentReloading
         || this.voiceOptionsLoading
@@ -605,6 +627,9 @@ export default {
   methods: {
     goToHome() {
       this.$router.push("/home");
+    },
+    handleCharacterStyleBindingChanged(styleId) {
+      this.$set(this.form, 'characterStyleId', styleId || null);
     },
     normalizeFunctionParams(params, fallback = {}) {
       if (params === null || params === undefined || params === '') {
@@ -799,6 +824,8 @@ export default {
         type: "warning",
       })
         .then(() => {
+          const characterStyleId = this.form.characterStyleId || null;
+          const preservedSystemPrompt = characterStyleId ? this.form.systemPrompt : "";
           this.selectedLanguage = "";
           this.ttsLanguageTouched = true;
           this.ttsVoiceTouched = true;
@@ -808,7 +835,8 @@ export default {
             ttsVoiceId: "",
             ttsLanguage: "",
             chatHistoryConf: 0,
-            systemPrompt: "",
+            systemPrompt: preservedSystemPrompt,
+            characterStyleId,
             summaryMemory: "",
             langCode: "",
             language: "",
@@ -845,6 +873,10 @@ export default {
     },
     selectTemplate(template) {
       if (this.loadingTemplate) return;
+      if (this.hasCharacterStyle) {
+        this.$message.warning(this.$t('characterStyle.templateDisabled'));
+        return;
+      }
       this.loadingTemplate = true;
       try {
         this.applyTemplateData(template);
@@ -2145,6 +2177,18 @@ export default {
 
 .template-item:hover {
   background-color: #d0d8ff;
+}
+
+.template-item.template-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.role-prompt-preserved-notice {
+  margin-top: 6px;
+  color: #b7791f;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .model-select-wrapper {

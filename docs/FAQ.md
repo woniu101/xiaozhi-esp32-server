@@ -95,8 +95,9 @@ VAD:
 ### 11、语音克隆、本地语音部署相关教程
 1、[如何在智控台克隆音色](./huoshan-streamTTS-voice-cloning.md)<br/>
 2、[如何部署集成index-tts本地语音](./index-stream-integration.md)<br/>
-3、[如何部署集成fish-speech本地语音](./fish-speech-integration.md)<br/>
-4、[如何部署集成PaddleSpeech本地语音](./paddlespeech-deploy.md)<br/>
+3、[dot-skill人物风格、招牌语音与IndexTTS2.5 MVP使用指南](./dot-skill-index-tts-mvp.md)<br/>
+4、[如何部署集成fish-speech本地语音](./fish-speech-integration.md)<br/>
+5、[如何部署集成PaddleSpeech本地语音](./paddlespeech-deploy.md)<br/>
 
 ### 12、性能测试教程
 1、[各组件速度测试指南](./performance_tester.md)<br/>

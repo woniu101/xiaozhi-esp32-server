@@ -57,6 +57,7 @@ class PromptManager:
         self.config = config
         self.logger = logger or setup_logging()
         self.base_prompt_template = None
+        self.character_style_prompt_template = None
         self.last_update_time = 0
 
         # 导入全局缓存管理器
@@ -86,10 +87,8 @@ class PromptManager:
             if cached_template is not None:
                 self.base_prompt_template = cached_template
                 self.logger.bind(tag=TAG).debug("从缓存加载基础提示词模板")
-                return
-
             # 缓存未命中，从文件读取
-            if os.path.exists(template_path):
+            elif os.path.exists(template_path):
                 with open(template_path, "r", encoding="utf-8") as f:
                     template_content = f.read()
 
@@ -101,8 +100,34 @@ class PromptManager:
                 self.logger.bind(tag=TAG).debug("成功加载基础提示词模板并缓存")
             else:
                 self.logger.bind(tag=TAG).warning(f"未找到{template_path}文件")
+
+            character_template_path = "agent-character-style-prompt.txt"
+            character_cache_key = f"prompt_template:{character_template_path}"
+            cached_character_template = self.cache_manager.get(
+                self.CacheType.CONFIG, character_cache_key
+            )
+            if cached_character_template is not None:
+                self.character_style_prompt_template = cached_character_template
+            elif os.path.exists(character_template_path):
+                with open(character_template_path, "r", encoding="utf-8") as f:
+                    self.character_style_prompt_template = f.read()
+                self.cache_manager.set(
+                    self.CacheType.CONFIG,
+                    character_cache_key,
+                    self.character_style_prompt_template,
+                )
+            else:
+                self.logger.bind(tag=TAG).error(
+                    f"未找到{character_template_path}，人物风格将无法使用中性基础模板"
+                )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"加载提示词模板失败: {e}")
+
+    def _active_prompt_template(self):
+        character_style = self.config.get("character_style")
+        if isinstance(character_style, dict) and character_style.get("active") is True:
+            return self.character_style_prompt_template
+        return self.base_prompt_template
 
     def get_quick_prompt(self, user_prompt: str, device_id: str = None) -> str:
         """快速获取系统提示词（使用用户配置）"""
@@ -211,21 +236,22 @@ class PromptManager:
     def update_context_info(self, conn, client_ip: str):
         """同步更新上下文信息"""
         try:
+            active_template = self._active_prompt_template()
             local_address = ""
             if (
                 client_ip
-                and self.base_prompt_template
+                and active_template
                 and (
-                    "local_address" in self.base_prompt_template
-                    or "weather_info" in self.base_prompt_template
+                    "local_address" in active_template
+                    or "weather_info" in active_template
                 )
             ):
                 # 获取位置信息（使用全局缓存）
                 local_address = self._get_location_info(client_ip)
 
             if (
-                self.base_prompt_template
-                and "weather_info" in self.base_prompt_template
+                active_template
+                and "weather_info" in active_template
                 and local_address
             ):
                 # 获取天气信息（使用全局缓存）
@@ -234,8 +260,8 @@ class PromptManager:
             # 获取配置的上下文数据
             if hasattr(conn, "device_id") and conn.device_id:
                 if (
-                    self.base_prompt_template
-                    and "dynamic_context" in self.base_prompt_template
+                    active_template
+                    and "dynamic_context" in active_template
                 ):
                     self.context_data = self.context_provider.fetch_all(conn.device_id)
                 else:
@@ -250,7 +276,8 @@ class PromptManager:
         self, user_prompt: str, device_id: str, client_ip: str = None, *args, **kwargs
     ) -> str:
         """构建增强的系统提示词"""
-        if not self.base_prompt_template:
+        active_template = self._active_prompt_template()
+        if not active_template:
             return user_prompt
 
         try:
@@ -284,7 +311,7 @@ class PromptManager:
             self.logger.bind(tag=TAG).debug(f"获取到选择的语言: {language}")
 
             # 替换模板变量
-            template = Template(self.base_prompt_template)
+            template = Template(active_template)
             enhanced_prompt = template.render(
                 base_prompt=user_prompt,
                 current_time="{{current_time}}",

@@ -2,6 +2,8 @@ package xiaozhi.modules.timbre.service;
 
 import java.util.List;
 
+import org.springframework.web.multipart.MultipartFile;
+
 import xiaozhi.common.page.PageData;
 import xiaozhi.common.service.BaseService;
 import xiaozhi.modules.model.dto.VoiceDTO;
@@ -9,6 +11,7 @@ import xiaozhi.modules.timbre.dto.TimbreDataDTO;
 import xiaozhi.modules.timbre.dto.TimbrePageDTO;
 import xiaozhi.modules.timbre.entity.TimbreEntity;
 import xiaozhi.modules.timbre.vo.TimbreDetailsVO;
+import xiaozhi.modules.timbre.vo.IndexTtsVoiceVO;
 
 /**
  * 音色的业务层的定义
@@ -81,4 +84,20 @@ public interface TimbreService extends BaseService<TimbreEntity> {
      * @return 音色信息
      */
     VoiceDTO getByVoiceCode(String ttsModelId, String voiceCode);
+
+    List<IndexTtsVoiceVO> getIndexTtsRemoteVoices(String ttsModelId);
+
+    List<IndexTtsVoiceVO> syncIndexTtsRemoteVoices(String ttsModelId);
+
+    IndexTtsVoiceVO registerIndexTtsVoice(
+            String ttsModelId,
+            String voiceId,
+            String name,
+            String languages,
+            String promptText,
+            MultipartFile audio);
+
+    void deleteIndexTtsVoice(String ttsModelId, String voiceId);
+
+    byte[] previewIndexTtsVoice(String ttsModelId, String voiceId, String text);
 }

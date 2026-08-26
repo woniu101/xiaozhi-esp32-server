@@ -45,6 +45,10 @@ from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils import textUtils
+from core.character_style.prompt import resolve_runtime_prompt
+from core.character_style.models import SignatureSegmentType
+from core.character_style.signature_asset import character_style_data_dir
+from core.character_style.signature_router import create_signature_router
 
 
 TAG = __name__
@@ -169,6 +173,7 @@ class ConnectionHandler:
         self.sentence_id = None
         # 处理TTS响应没有文本返回
         self.tts_MessageText = ""
+        self._signature_routers = {}
 
         # iot相关变量
         self.iot_descriptors = {}
@@ -900,8 +905,15 @@ class ConnectionHandler:
                 self.config["Intent"][self.config["selected_module"]["Intent"]][
                     "functions"
                 ] = expanded_functions
+        if private_config.get("character_style", None) is not None:
+            self.config["character_style"] = private_config["character_style"]
         if private_config.get("prompt", None) is not None:
-            self.config["prompt"] = private_config["prompt"]
+            # 原角色介绍仍由 Manager 保存并原样下发；运行时只选择一个人物身份。
+            self.config["role_prompt"] = private_config["prompt"]
+            self.config["prompt"] = resolve_runtime_prompt(
+                private_config["prompt"],
+                private_config.get("character_style"),
+            )
         # 获取声纹信息
         if private_config.get("voiceprint", None) is not None:
             self.config["voiceprint"] = private_config["voiceprint"]
@@ -1049,6 +1061,83 @@ class ConnectionHandler:
         # 更新系统prompt至上下文
         self.dialogue.update_system_message(self.prompt)
 
+    def _start_signature_turn(self, sentence_id):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        data_dir = character_style_data_dir(self.config, project_root)
+        try:
+            router = create_signature_router(
+                self.config.get("character_style"),
+                data_dir,
+            )
+            self._signature_routers[sentence_id] = router
+            style = self.config.get("character_style") or {}
+            signatures = style.get("signature_config") or {}
+            if signatures.get("enabled") is True:
+                if router.enabled:
+                    self.logger.bind(tag=TAG).info(
+                        f"固定招牌录音路由已加载，共享数据目录: {data_dir}"
+                    )
+                else:
+                    self.logger.bind(tag=TAG).warning(
+                        f"固定招牌录音已开启但没有可播放条目，请检查录音共享目录: {data_dir}"
+                    )
+        except Exception as error:
+            self.logger.bind(tag=TAG).warning(
+                f"招牌语音配置加载失败，本轮全部使用当前TTS: {error}"
+            )
+            self._signature_routers[sentence_id] = create_signature_router(None, data_dir)
+
+    def _enqueue_signature_segments(self, sentence_id, segments):
+        for segment in segments:
+            if not segment.text:
+                continue
+            is_file = segment.segment_type is SignatureSegmentType.FILE
+            if is_file:
+                self.logger.bind(tag=TAG).info(
+                    f"命中固定招牌录音: {segment.text} -> {segment.audio_file}"
+                )
+            self.tts.tts_text_queue.put(
+                TTSMessageDTO(
+                    sentence_id=sentence_id,
+                    sentence_type=SentenceType.MIDDLE,
+                    content_type=ContentType.FILE if is_file else ContentType.TEXT,
+                    content_detail=segment.text,
+                    content_file=segment.audio_file if is_file else None,
+                )
+            )
+
+    def _enqueue_llm_spoken_text(self, sentence_id, text):
+        if not text:
+            return
+        router = self._signature_routers.get(sentence_id)
+        if router is None:
+            self.tts.tts_text_queue.put(
+                TTSMessageDTO(
+                    sentence_id=sentence_id,
+                    sentence_type=SentenceType.MIDDLE,
+                    content_type=ContentType.TEXT,
+                    content_detail=text,
+                )
+            )
+            return
+        self._enqueue_signature_segments(sentence_id, router.feed(text))
+
+    def _flush_signature_text(self, sentence_id):
+        router = self._signature_routers.get(sentence_id)
+        if router is not None:
+            self._enqueue_signature_segments(sentence_id, router.flush())
+
+    def _finish_tts_turn(self, sentence_id):
+        self._flush_signature_text(sentence_id)
+        self.tts.tts_text_queue.put(
+            TTSMessageDTO(
+                sentence_id=sentence_id,
+                sentence_type=SentenceType.LAST,
+                content_type=ContentType.ACTION,
+            )
+        )
+        self._signature_routers.pop(sentence_id, None)
+
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
@@ -1060,6 +1149,7 @@ class ConnectionHandler:
         if depth == 0:
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
+            self._start_signature_turn(current_sentence_id)
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
@@ -1141,6 +1231,8 @@ class ConnectionHandler:
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM 处理出错 {query}: {e}")
+            if depth == 0:
+                self._finish_tts_turn(current_sentence_id)
             return None
 
         # 处理流式响应
@@ -1184,13 +1276,8 @@ class ConnectionHandler:
                                     new_part = self._clean_response_garbage(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
-                                        self.tts.tts_text_queue.put(
-                                            TTSMessageDTO(
-                                                sentence_id=current_sentence_id,
-                                                sentence_type=SentenceType.MIDDLE,
-                                                content_type=ContentType.TEXT,
-                                                content_detail=new_part,
-                                            )
+                                        self._enqueue_llm_spoken_text(
+                                            current_sentence_id, new_part
                                         )
                 else:
                     content = response
@@ -1207,32 +1294,14 @@ class ConnectionHandler:
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
                         response_message.append(content)
-                        self.tts.tts_text_queue.put(
-                            TTSMessageDTO(
-                                sentence_id=current_sentence_id,
-                                sentence_type=SentenceType.MIDDLE,
-                                content_type=ContentType.TEXT,
-                                content_detail=content,
-                            )
-                        )
+                        self._enqueue_llm_spoken_text(current_sentence_id, content)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM stream processing error: {e}")
-            self.tts.tts_text_queue.put(
-                TTSMessageDTO(
-                    sentence_id=current_sentence_id,
-                    sentence_type=SentenceType.MIDDLE,
-                    content_type=ContentType.TEXT,
-                    content_detail=get_system_error_response(self.config),
-                )
+            self._enqueue_llm_spoken_text(
+                current_sentence_id, get_system_error_response(self.config)
             )
             if depth == 0:
-                self.tts.tts_text_queue.put(
-                    TTSMessageDTO(
-                        sentence_id=current_sentence_id,
-                        sentence_type=SentenceType.LAST,
-                        content_type=ContentType.ACTION,
-                    )
-                )
+                self._finish_tts_turn(current_sentence_id)
             return
         # 处理function call
         if tool_call_flag:
@@ -1282,13 +1351,8 @@ class ConnectionHandler:
                             if remaining:
                                 remaining = self._clean_response_garbage(remaining)
                                 if remaining:
-                                    self.tts.tts_text_queue.put(
-                                        TTSMessageDTO(
-                                            sentence_id=current_sentence_id,
-                                            sentence_type=SentenceType.MIDDLE,
-                                            content_type=ContentType.TEXT,
-                                            content_detail=remaining,
-                                        )
+                                    self._enqueue_llm_spoken_text(
+                                        current_sentence_id, remaining
                                     )
                             # 写入对话历史
                             da_response = self._clean_response_garbage(da_response)
@@ -1297,13 +1361,7 @@ class ConnectionHandler:
 
                     if not real_tool_calls:
                         if depth == 0:
-                            self.tts.tts_text_queue.put(
-                                TTSMessageDTO(
-                                    sentence_id=current_sentence_id,
-                                    sentence_type=SentenceType.LAST,
-                                    content_type=ContentType.ACTION,
-                                )
-                            )
+                            self._finish_tts_turn(current_sentence_id)
                         return
 
                     tool_calls_list = real_tool_calls
@@ -1375,13 +1433,7 @@ class ConnectionHandler:
             self.dialogue.put(Message(role="assistant", content=text_buff))
 
         if depth == 0:
-            self.tts.tts_text_queue.put(
-                TTSMessageDTO(
-                    sentence_id=current_sentence_id,
-                    sentence_type=SentenceType.LAST,
-                    content_type=ContentType.ACTION,
-                )
-            )
+            self._finish_tts_turn(current_sentence_id)
             # 使用lambda延迟计算，只有在DEBUG级别时才执行get_llm_dialogue()
             self.logger.bind(tag=TAG).debug(
                 lambda: json.dumps(
@@ -1407,6 +1459,7 @@ class ConnectionHandler:
                         f"Skipping duplicate TTS for tool {tool_call_data['name']}, already streamed"
                     )
                 else:
+                    self._flush_signature_text(self.sentence_id)
                     self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
                     self.tts.store_tts_text(self.sentence_id, text)
                 self.dialogue.put(Message(role="assistant", content=text))

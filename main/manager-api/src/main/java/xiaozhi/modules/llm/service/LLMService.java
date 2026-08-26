@@ -76,4 +76,9 @@ public interface LLMService {
      * @return 标题（约15字）
      */
     String generateTitle(String conversation, String modelId);
+
+    /**
+     * 使用指定模型完成一次无历史、无工具的系统提示词试跑。
+     */
+    String generateReply(String systemPrompt, String userPrompt, String modelId);
 }

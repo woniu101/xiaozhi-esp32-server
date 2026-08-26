@@ -1,5 +1,13 @@
 package xiaozhi.modules.timbre.service.impl;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -7,14 +15,18 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import cn.hutool.core.collection.CollectionUtil;
 import lombok.AllArgsConstructor;
 import xiaozhi.common.constant.Constant;
 import xiaozhi.common.exception.ErrorCode;
+import xiaozhi.common.exception.RenException;
 import xiaozhi.common.page.PageData;
 import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
@@ -22,6 +34,8 @@ import xiaozhi.common.service.impl.BaseServiceImpl;
 import xiaozhi.common.utils.ConvertUtils;
 import xiaozhi.common.utils.MessageUtils;
 import xiaozhi.modules.model.dto.VoiceDTO;
+import xiaozhi.modules.model.entity.ModelConfigEntity;
+import xiaozhi.modules.model.service.ModelConfigService;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.timbre.dao.TimbreDao;
 import xiaozhi.modules.timbre.dto.TimbreDataDTO;
@@ -29,6 +43,7 @@ import xiaozhi.modules.timbre.dto.TimbrePageDTO;
 import xiaozhi.modules.timbre.entity.TimbreEntity;
 import xiaozhi.modules.timbre.service.TimbreService;
 import xiaozhi.modules.timbre.vo.TimbreDetailsVO;
+import xiaozhi.modules.timbre.vo.IndexTtsVoiceVO;
 import xiaozhi.modules.voiceclone.dao.VoiceCloneDao;
 import xiaozhi.modules.voiceclone.entity.VoiceCloneEntity;
 
@@ -43,10 +58,20 @@ import xiaozhi.modules.voiceclone.entity.VoiceCloneEntity;
 public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> implements TimbreService {
 
     private static final Pattern LANGUAGE_SEPARATOR = Pattern.compile("[、；;,，]");
+    private static final Pattern INDEX_VOICE_ID = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$");
+    private static final long INDEX_VOICE_MAX_BYTES = 20L * 1024 * 1024;
+    private static final int INDEX_JSON_MAX_BYTES = 1024 * 1024;
+    private static final int INDEX_PREVIEW_MAX_BYTES = 64 * 1024 * 1024;
+    private static final HttpClient INDEX_TTS_HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build();
 
     private final TimbreDao timbreDao;
     private final VoiceCloneDao voiceCloneDao;
     private final RedisUtils redisUtils;
+    private final ModelConfigService modelConfigService;
+    private final ObjectMapper objectMapper;
 
     @Override
     public PageData<TimbreDetailsVO> page(TimbrePageDTO dto) {
@@ -245,5 +270,330 @@ public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> 
         dto.setVoiceDemo(entity.getVoiceDemo());
         dto.setIsClone(false); // 设置为普通音色
         return dto;
+    }
+
+    @Override
+    public List<IndexTtsVoiceVO> getIndexTtsRemoteVoices(String ttsModelId) {
+        return decorateRemoteVoices(ttsModelId, fetchIndexTtsRemoteVoices(ttsModelId));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public List<IndexTtsVoiceVO> syncIndexTtsRemoteVoices(String ttsModelId) {
+        List<IndexTtsVoiceVO> voices = fetchIndexTtsRemoteVoices(ttsModelId);
+        int sort = 1;
+        for (IndexTtsVoiceVO voice : voices) {
+            TimbreEntity entity = findIndexVoice(ttsModelId, voice.getVoiceId());
+            boolean create = entity == null;
+            if (create) {
+                entity = new TimbreEntity();
+                entity.setId(stableIndexVoiceId(ttsModelId, voice.getVoiceId()));
+                entity.setTtsModelId(ttsModelId);
+                entity.setTtsVoice(voice.getVoiceId());
+                entity.setVoiceDemo("");
+                entity.setRemark("IndexTTS2.5 远端音色");
+            }
+            entity.setName(voice.getName());
+            entity.setLanguages(StringUtils.defaultIfBlank(voice.getLanguages(), "普通话"));
+            entity.setReferenceText(StringUtils.defaultString(voice.getPromptText()));
+            entity.setSort((long) sort++);
+            if (create) {
+                timbreDao.insert(entity);
+            } else {
+                timbreDao.updateById(entity);
+                clearTimbreCache(entity.getId());
+            }
+        }
+        return decorateRemoteVoices(ttsModelId, voices);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public IndexTtsVoiceVO registerIndexTtsVoice(
+            String ttsModelId,
+            String voiceId,
+            String name,
+            String languages,
+            String promptText,
+            MultipartFile audio) {
+        validateVoiceId(voiceId);
+        if (StringUtils.isBlank(name) || name.trim().length() > 100) {
+            throw new RenException("音色名称长度必须在 1 到 100 个字符之间");
+        }
+        String normalizedLanguages = StringUtils.defaultIfBlank(languages, "普通话").trim();
+        if (normalizedLanguages.length() > 100) {
+            throw new RenException("语言描述不能超过 100 个字符");
+        }
+        String normalizedPrompt = StringUtils.defaultString(promptText).trim();
+        if (normalizedPrompt.length() > 500) {
+            throw new RenException("参考音频文本不能超过 500 个字符");
+        }
+        if (audio == null || audio.isEmpty()) {
+            throw new RenException("请上传 WAV 参考音频");
+        }
+        if (audio.getSize() > INDEX_VOICE_MAX_BYTES) {
+            throw new RenException("参考音频不能超过 20MB");
+        }
+        try {
+            byte[] audioBytes = audio.getBytes();
+            if (!isWav(audioBytes)) {
+                throw new RenException("参考音频必须是有效的 WAV 文件");
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("voice_id", voiceId);
+            payload.put("name", name.trim());
+            payload.put("languages", normalizedLanguages);
+            payload.put("prompt_text", normalizedPrompt);
+            payload.put("audio_base64", Base64.getEncoder().encodeToString(audioBytes));
+            RemoteResponse response = sendIndexRequest(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(indexTtsBaseUrl(ttsModelId) + "/v1/voices"))
+                            .timeout(Duration.ofSeconds(60))
+                            .header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(
+                                    objectMapper.writeValueAsString(payload), StandardCharsets.UTF_8))
+                            .build(),
+                    INDEX_JSON_MAX_BYTES);
+            ensureIndexTtsSuccess(response.statusCode(), response.text(), "注册音色");
+            return syncIndexTtsRemoteVoices(ttsModelId).stream()
+                    .filter(item -> voiceId.equals(item.getVoiceId()))
+                    .findFirst()
+                    .orElseThrow(() -> new RenException("远端音色注册成功，但同步结果中未找到该音色"));
+        } catch (RenException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            restoreInterrupt(exception);
+            throw new RenException("IndexTTS2.5 音色注册失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteIndexTtsVoice(String ttsModelId, String voiceId) {
+        validateVoiceId(voiceId);
+        boolean defaultVoice = fetchIndexTtsRemoteVoices(ttsModelId).stream()
+                .anyMatch(item -> voiceId.equals(item.getVoiceId()) && Boolean.TRUE.equals(item.getDefaultVoice()));
+        if (defaultVoice) {
+            throw new RenException("IndexTTS2.5 默认音色不能删除");
+        }
+        TimbreEntity local = findIndexVoice(ttsModelId, voiceId);
+        if (local != null && timbreDao.countVoiceReferences(local.getId()) > 0) {
+            throw new RenException("该音色仍被角色或角色模板使用，请先切换这些绑定");
+        }
+        try {
+            RemoteResponse response = sendIndexRequest(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(indexTtsBaseUrl(ttsModelId) + "/v1/voices/" + voiceId))
+                            .timeout(Duration.ofSeconds(30))
+                            .DELETE()
+                            .build(),
+                    INDEX_JSON_MAX_BYTES);
+            if (response.statusCode() != 404) {
+                ensureIndexTtsSuccess(response.statusCode(), response.text(), "删除音色");
+            }
+            if (local != null) {
+                timbreDao.deleteById(local.getId());
+                clearTimbreCache(local.getId());
+            }
+        } catch (RenException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            restoreInterrupt(exception);
+            throw new RenException("IndexTTS2.5 音色删除失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    @Override
+    public byte[] previewIndexTtsVoice(String ttsModelId, String voiceId, String text) {
+        validateVoiceId(voiceId);
+        if (StringUtils.isBlank(text) || text.length() > 300) {
+            throw new RenException("试听文本长度必须在 1 到 300 个字符之间");
+        }
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("request_id", "manager-preview-" + UUID.randomUUID());
+            payload.put("voice_id", voiceId);
+            payload.put("text", text.trim());
+            payload.put("lang", "zh");
+            payload.put("speed", 1.0);
+            RemoteResponse response = sendIndexRequest(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(indexTtsBaseUrl(ttsModelId) + "/v1/tts"))
+                            .timeout(Duration.ofSeconds(120))
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "audio/wav")
+                            .POST(HttpRequest.BodyPublishers.ofString(
+                                    objectMapper.writeValueAsString(payload), StandardCharsets.UTF_8))
+                            .build(),
+                    INDEX_PREVIEW_MAX_BYTES);
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                ensureIndexTtsSuccess(response.statusCode(), response.text(), "试听音色");
+            }
+            if (!isWav(response.body())) {
+                throw new RenException("IndexTTS2.5 试听接口未返回有效 WAV");
+            }
+            return response.body();
+        } catch (RenException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            restoreInterrupt(exception);
+            throw new RenException("IndexTTS2.5 音色试听失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    private List<IndexTtsVoiceVO> fetchIndexTtsRemoteVoices(String ttsModelId) {
+        try {
+            RemoteResponse response = sendIndexRequest(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create(indexTtsBaseUrl(ttsModelId) + "/v1/voices"))
+                            .timeout(Duration.ofSeconds(15))
+                            .GET()
+                            .build(),
+                    INDEX_JSON_MAX_BYTES);
+            ensureIndexTtsSuccess(response.statusCode(), response.text(), "读取音色列表");
+            JsonNode voicesNode = objectMapper.readTree(response.body()).path("voices");
+            if (!voicesNode.isArray()) {
+                throw new RenException("IndexTTS2.5 音色接口返回格式不正确");
+            }
+            List<IndexTtsVoiceVO> voices = new ArrayList<>();
+            for (JsonNode item : voicesNode) {
+                String voiceId = item.path("voice_id").asText();
+                if (!INDEX_VOICE_ID.matcher(voiceId).matches()) {
+                    throw new RenException("IndexTTS2.5 返回了无效 Voice ID");
+                }
+                IndexTtsVoiceVO voice = new IndexTtsVoiceVO();
+                voice.setVoiceId(voiceId);
+                voice.setName(item.path("name").asText(voiceId));
+                voice.setLanguages(item.path("languages").asText("普通话"));
+                voice.setPromptText(item.path("prompt_text").asText(""));
+                voice.setDefaultVoice(item.path("default").asBoolean(false));
+                voices.add(voice);
+            }
+            return voices;
+        } catch (RenException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            restoreInterrupt(exception);
+            throw new RenException("IndexTTS2.5 音色列表读取失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    private List<IndexTtsVoiceVO> decorateRemoteVoices(
+            String ttsModelId,
+            List<IndexTtsVoiceVO> voices) {
+        for (IndexTtsVoiceVO voice : voices) {
+            TimbreEntity local = findIndexVoice(ttsModelId, voice.getVoiceId());
+            voice.setLocalId(local == null ? null : local.getId());
+            voice.setSynced(local != null);
+        }
+        return voices;
+    }
+
+    private TimbreEntity findIndexVoice(String ttsModelId, String voiceId) {
+        return timbreDao.selectOne(
+                new QueryWrapper<TimbreEntity>()
+                        .eq("tts_model_id", ttsModelId)
+                        .eq("tts_voice", voiceId)
+                        .last("LIMIT 1"));
+    }
+
+    private String stableIndexVoiceId(String ttsModelId, String voiceId) {
+        return UUID.nameUUIDFromBytes(
+                (ttsModelId + "\u0000" + voiceId).getBytes(StandardCharsets.UTF_8))
+                .toString()
+                .replace("-", "");
+    }
+
+    private String indexTtsBaseUrl(String ttsModelId) {
+        ModelConfigEntity model = modelConfigService.getModelByIdFromCache(ttsModelId);
+        if (model == null || model.getConfigJson() == null) {
+            throw new RenException("IndexTTS2.5 模型配置不存在");
+        }
+        if (!"index_tts_v2_5".equals(model.getConfigJson().getStr("type"))) {
+            throw new RenException("当前模型不是 IndexTTS2.5");
+        }
+        String url = removeSuffix(model.getConfigJson().getStr("api_url"), "/");
+        if (StringUtils.isBlank(url)) {
+            throw new RenException("IndexTTS2.5 API 地址未配置");
+        }
+        if (url.endsWith("/v1/tts/stream")) {
+            url = removeSuffix(url, "/v1/tts/stream");
+        } else if (url.endsWith("/v1/tts")) {
+            url = removeSuffix(url, "/v1/tts");
+        }
+        try {
+            URI uri = URI.create(url);
+            String scheme = StringUtils.defaultString(uri.getScheme()).toLowerCase(Locale.ROOT);
+            if (!("http".equals(scheme) || "https".equals(scheme)) || uri.getHost() == null) {
+                throw new IllegalArgumentException();
+            }
+            if (uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
+                throw new RenException("IndexTTS2.5 API 地址不得包含账号、查询参数或片段");
+            }
+            return url;
+        } catch (RenException exception) {
+            throw exception;
+        } catch (IllegalArgumentException exception) {
+            throw new RenException("IndexTTS2.5 API 地址必须是有效的 HTTP 或 HTTPS 地址");
+        }
+    }
+
+    private String removeSuffix(String value, String suffix) {
+        if (value == null || suffix == null || !value.endsWith(suffix)) {
+            return value;
+        }
+        return value.substring(0, value.length() - suffix.length());
+    }
+
+    private RemoteResponse sendIndexRequest(HttpRequest request, int maxBytes)
+            throws IOException, InterruptedException {
+        HttpResponse<InputStream> response = INDEX_TTS_HTTP_CLIENT.send(
+                request, HttpResponse.BodyHandlers.ofInputStream());
+        byte[] body;
+        try (InputStream input = response.body()) {
+            body = input.readNBytes(maxBytes + 1);
+        }
+        if (body.length > maxBytes) {
+            throw new RenException("IndexTTS2.5 返回内容超过安全大小限制");
+        }
+        return new RemoteResponse(response.statusCode(), body);
+    }
+
+    private void ensureIndexTtsSuccess(int statusCode, String body, String action) {
+        if (statusCode >= 200 && statusCode < 300) {
+            return;
+        }
+        String details = StringUtils.abbreviate(StringUtils.defaultString(body), 400);
+        throw new RenException(action + "失败，远端状态码 " + statusCode
+                + (StringUtils.isBlank(details) ? "" : "：" + details));
+    }
+
+    private void validateVoiceId(String voiceId) {
+        if (!INDEX_VOICE_ID.matcher(StringUtils.defaultString(voiceId)).matches()) {
+            throw new RenException("Voice ID 只能包含字母、数字、点、下划线和连字符，最长 80 个字符");
+        }
+    }
+
+    private boolean isWav(byte[] audio) {
+        return audio != null && audio.length >= 44
+                && audio[0] == 'R' && audio[1] == 'I' && audio[2] == 'F' && audio[3] == 'F'
+                && audio[8] == 'W' && audio[9] == 'A' && audio[10] == 'V' && audio[11] == 'E';
+    }
+
+    private void clearTimbreCache(String timbreId) {
+        redisUtils.delete(RedisKeys.getTimbreDetailsKey(timbreId));
+        redisUtils.delete(RedisKeys.getTimbreNameById(timbreId));
+    }
+
+    private void restoreInterrupt(Exception exception) {
+        if (exception instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private record RemoteResponse(int statusCode, byte[] body) {
+        private String text() {
+            return new String(body, StandardCharsets.UTF_8);
+        }
     }
 }

@@ -55,6 +55,10 @@ log:
   # 设置数据文件路径
   data_dir: data
 
+# 人物源码与固定招牌录音所在的数据根目录。manager-api 和 xiaozhi-server
+# 分进程源码运行时必须指向同一目录；Docker 全模块部署保持 data 即可。
+character_style_data_dir: data
+
 # 使用完声音文件后删除文件(Delete the sound file when you are done using it)
 delete_audio: true
 # 没有语音输入多久后断开连接(秒)，默认2分钟，即120秒
@@ -1133,6 +1137,21 @@ TTS:
     voice: "jay_klee"
     output_dir: tmp/
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
+  IndexTTS2_5:
+    # IndexTTS2.5 独立 HTTP 服务；同时支持整段 WAV 和分段 PCM 流。
+    # api_url 可填写服务根地址或完整的 /v1/tts 地址。
+    type: index_tts_v2_5
+    api_url: http://127.0.0.1:8092
+    voice: tuniang-normal
+    lang: zh
+    speed: 1.0
+    text_normalization: true
+    streaming: true
+    # 仅在当前分段尚未向设备输出音频包时，才允许安全回退整段 WAV。
+    stream_fallback: true
+    stream_chunk_size: 8192
+    output_dir: tmp/
+    tts_timeout: 60
   AliBLTTS:
     # 阿里百炼CosyVoice大模型流式文本语音合成
     # 可在这里找到你的 api_key https://bailian.console.aliyun.com/?apiKey=1#/api-key

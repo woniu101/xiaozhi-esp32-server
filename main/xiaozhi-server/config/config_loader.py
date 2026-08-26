@@ -67,6 +67,20 @@ async def get_config_from_api_async(config):
         "url": config["manager-api"].get("url", ""),
         "secret": config["manager-api"].get("secret", ""),
     }
+    # Filesystem paths are local deployment concerns and must not be discarded
+    # when the rest of the server configuration comes from manager-api.
+    character_style_data_dir = config.get("character_style_data_dir")
+    if not isinstance(character_style_data_dir, str) or not character_style_data_dir.strip():
+        shared_style_dir = os.environ.get("CHARACTER_STYLE_DIR", "").strip()
+        if shared_style_dir:
+            shared_path = os.path.abspath(os.path.expanduser(shared_style_dir))
+            character_style_data_dir = (
+                os.path.dirname(shared_path)
+                if os.path.basename(shared_path) == "character_styles"
+                else shared_path
+            )
+    if isinstance(character_style_data_dir, str) and character_style_data_dir.strip():
+        config_data["character_style_data_dir"] = character_style_data_dir.strip()
     auth_enabled = config_data.get("server", {}).get("auth", {}).get("enabled", False)
     # server的配置以本地为准
     if config.get("server"):
