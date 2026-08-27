@@ -1136,6 +1136,7 @@ export default {
   'modelConfigDialog.normalWav': 'Normal WAV',
   'modelConfigDialog.streamingApi': 'Streaming API',
   'modelConfigDialog.indexStreamingHelp': 'Recommended: synthesize while sending audio to the device. Failures before the first stream packet safely fall back to a complete WAV.',
+  'modelConfigDialog.indexSpeedRange': 'Tốc độ IndexTTS2.5 phải nằm trong khoảng từ 0,5 đến 2,0',
   'modelConfigDialog.available': 'Available',
   'modelConfigDialog.unavailable': 'Unavailable',
   'modelConfigDialog.enterJsonExample': 'Vui lòng nhập biến định dạng JSON (ví dụ:{\"key\":\"value\"})',

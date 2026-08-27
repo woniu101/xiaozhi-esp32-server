@@ -1136,6 +1136,7 @@ export default {
   'modelConfigDialog.normalWav': 'Normal WAV',
   'modelConfigDialog.streamingApi': 'Streaming API',
   'modelConfigDialog.indexStreamingHelp': 'Recommended: synthesize while sending audio to the device. Failures before the first stream packet safely fall back to a complete WAV.',
+  'modelConfigDialog.indexSpeedRange': 'Die IndexTTS2.5-Geschwindigkeit muss zwischen 0,5 und 2,0 liegen',
   'modelConfigDialog.available': 'Available',
   'modelConfigDialog.unavailable': 'Unavailable',
   'modelConfigDialog.enterJsonExample': 'Bitte JSON-Format Variablen eingeben (Beispiel:{\"key\":\"value\"})',

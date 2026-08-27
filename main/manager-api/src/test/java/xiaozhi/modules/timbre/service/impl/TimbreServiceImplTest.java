@@ -2,6 +2,7 @@ package xiaozhi.modules.timbre.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -13,7 +14,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import cn.hutool.json.JSONObject;
+
+import xiaozhi.common.exception.RenException;
 import xiaozhi.common.redis.RedisUtils;
+import xiaozhi.modules.model.entity.ModelConfigEntity;
 import xiaozhi.modules.model.service.ModelConfigService;
 import xiaozhi.modules.timbre.dao.TimbreDao;
 import xiaozhi.modules.timbre.dto.TimbreDataDTO;
@@ -121,6 +126,36 @@ class TimbreServiceImplTest {
         TimbreDetailsVO details = service.get("voice-id");
 
         assertNull(details.getSort());
+    }
+
+    @Test
+    void indexTtsPreviewSpeedUsesPersistedModelValue() {
+        TimbreServiceImpl service = service(
+                mock(TimbreDao.class), mock(VoiceCloneDao.class), mock(RedisUtils.class));
+        ModelConfigEntity model = indexTtsModel(0.7);
+
+        double speed = ReflectionTestUtils.invokeMethod(service, "indexTtsSpeed", model);
+
+        assertEquals(0.7, speed);
+    }
+
+    @Test
+    void indexTtsPreviewSpeedRejectsOutOfRangeValue() {
+        TimbreServiceImpl service = service(
+                mock(TimbreDao.class), mock(VoiceCloneDao.class), mock(RedisUtils.class));
+        ModelConfigEntity model = indexTtsModel(0.1);
+
+        assertThrows(RenException.class,
+                () -> ReflectionTestUtils.invokeMethod(service, "indexTtsSpeed", model));
+    }
+
+    private ModelConfigEntity indexTtsModel(double speed) {
+        JSONObject config = new JSONObject();
+        config.set("type", "index_tts_v2_5");
+        config.set("speed", speed);
+        ModelConfigEntity model = new ModelConfigEntity();
+        model.setConfigJson(config);
+        return model;
     }
 
     private TimbreDataDTO validTimbreData() {

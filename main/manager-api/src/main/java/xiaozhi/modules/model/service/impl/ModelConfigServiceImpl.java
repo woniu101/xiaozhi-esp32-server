@@ -113,6 +113,8 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
         // 2. 验证模型提供者
         validateModelProvider(modelType, provideCode);
 
+        validateProviderConfiguration(provideCode, modelConfigBodyDTO);
+
         // 3. 获取原始配置（不经过敏感数据处理）
         ModelConfigEntity originalEntity = getOriginalConfigFromDb(id);
 
@@ -137,6 +139,8 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
         validateAddParameters(modelType, provideCode, modelConfigBodyDTO);
 
         validateModelProvider(modelType, provideCode);
+
+        validateProviderConfiguration(provideCode, modelConfigBodyDTO);
 
         ModelConfigEntity modelConfigEntity = prepareAddEntity(modelConfigBodyDTO, modelType);
 
@@ -289,6 +293,27 @@ public class ModelConfigServiceImpl extends BaseServiceImpl<ModelConfigDao, Mode
         List<ModelProviderDTO> providerList = modelProviderService.getList(modelType, provideCode);
         if (CollectionUtil.isEmpty(providerList)) {
             throw new RenException(ErrorCode.MODEL_PROVIDER_NOT_EXIST);
+        }
+    }
+
+    private void validateProviderConfiguration(String provideCode, ModelConfigBodyDTO modelConfigBodyDTO) {
+        if (!"index_tts_v2_5".equals(provideCode) || modelConfigBodyDTO.getConfigJson() == null) {
+            return;
+        }
+        Object configured = modelConfigBodyDTO.getConfigJson().get("speed");
+        if (configured == null || StringUtils.isBlank(configured.toString())) {
+            return;
+        }
+        final double speed;
+        try {
+            speed = configured instanceof Number
+                    ? ((Number) configured).doubleValue()
+                    : Double.parseDouble(configured.toString().trim());
+        } catch (NumberFormatException exception) {
+            throw new RenException("IndexTTS2.5 语速必须是 0.5 到 2.0 之间的数字");
+        }
+        if (!Double.isFinite(speed) || speed < 0.5 || speed > 2.0) {
+            throw new RenException("IndexTTS2.5 语速必须在 0.5 到 2.0 之间");
         }
     }
 

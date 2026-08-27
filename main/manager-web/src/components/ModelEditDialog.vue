@@ -90,6 +90,10 @@
               </el-tooltip>
             </div>
 
+            <el-input-number v-else-if="isIndexTts && field.prop === 'speed'"
+              v-model="form.configJson[field.prop]" :min="0.5" :max="2" :step="0.1" :precision="1"
+              controls-position="right" class="index-speed-input" />
+
             <el-switch v-else-if="field.type === 'boolean'" v-model="form.configJson[field.prop]"></el-switch>
 
             <el-input v-else v-model="form.configJson[field.prop]" :placeholder="field.placeholder" :type="field.type"
@@ -269,6 +273,11 @@ export default {
     handleSave() {
       this.saving = true; // 开始保存加载
 
+      if (!this.validateIndexTtsSpeed()) {
+        this.saving = false;
+        return;
+      }
+
       // 处理所有JSON字段
       Object.keys(this.fieldJsonMap).forEach((key) => {
         const parsed = this.validateJson(this.fieldJsonMap[key]);
@@ -301,6 +310,16 @@ export default {
       setTimeout(() => {
         this.saving = false;
       }, 3000);
+    },
+    validateIndexTtsSpeed() {
+      if (!this.isIndexTts) return true;
+      const speed = Number(this.form.configJson.speed);
+      if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) {
+        this.$message.error(this.$t('modelConfigDialog.indexSpeedRange'));
+        return false;
+      }
+      this.form.configJson.speed = speed;
+      return true;
     },
     loadProviders() {
       if (this.providersLoaded) return;
@@ -561,6 +580,8 @@ export default {
   }
 
   .index-streaming-help-icon { color: #8791a8; cursor: help; }
+
+  ::v-deep .index-speed-input { width: 100%; }
 
   ::v-deep .el-input__inner {
     height: 32px;

@@ -86,6 +86,9 @@
                 <i class="el-icon-question index-streaming-help-icon" />
               </el-tooltip>
             </div>
+            <el-input-number v-else-if="isIndexTts && field.prop === 'speed'"
+              v-model="formData.configJson[field.prop]" :min="0.5" :max="2" :step="0.1" :precision="1"
+              controls-position="right" class="index-speed-input custom-input-bg" />
             <el-switch v-else-if="field.type === 'boolean'" v-model="formData.configJson[field.prop]"></el-switch>
             <el-input v-else v-model="formData.configJson[field.prop]" :placeholder="field.placeholder"
               :type="field.type || 'text'" class="custom-input-bg" :show-password="field.type === 'password'">
@@ -232,6 +235,11 @@ export default {
         return;
       }
 
+      if (!this.validateIndexTtsSpeed()) {
+        this.saving = false;
+        return;
+      }
+
       const submitData = {
         id: this.formData.id || '',
         modelName: this.formData.modelName || '',
@@ -258,6 +266,16 @@ export default {
       } finally {
         this.saving = false;
       }
+    },
+    validateIndexTtsSpeed() {
+      if (!this.isIndexTts) return true;
+      const speed = Number(this.formData.configJson.speed);
+      if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) {
+        this.$message.error(this.$t('modelConfigDialog.indexSpeedRange'));
+        return false;
+      }
+      this.formData.configJson.speed = speed;
+      return true;
     },
     resetForm() {
       this.saving = false;
@@ -382,6 +400,8 @@ export default {
   }
 
   .index-streaming-help-icon { color: #8791a8; cursor: help; }
+
+  ::v-deep .index-speed-input { width: 100%; }
 
   .dialog-footer {
     display: flex;

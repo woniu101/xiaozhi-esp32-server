@@ -1136,6 +1136,7 @@ export default {
   'modelConfigDialog.normalWav': '普通 WAV',
   'modelConfigDialog.streamingApi': '流式接口',
   'modelConfigDialog.indexStreamingHelp': '建议开启：边合成边向设备输出音频；流式首包前失败时会安全回退到整段 WAV。',
+  'modelConfigDialog.indexSpeedRange': 'IndexTTS2.5 语速必须在 0.5 到 2.0 之间',
   'modelConfigDialog.available': '可用',
   'modelConfigDialog.unavailable': '不可用',
   'modelConfigDialog.enterJsonExample': '请输入JSON格式变量(示例:{"key":"value"})',

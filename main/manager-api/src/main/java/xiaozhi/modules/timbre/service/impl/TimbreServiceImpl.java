@@ -410,15 +410,16 @@ public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> 
             throw new RenException("试听文本长度必须在 1 到 300 个字符之间");
         }
         try {
+            ModelConfigEntity model = indexTtsModel(ttsModelId);
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("request_id", "manager-preview-" + UUID.randomUUID());
             payload.put("voice_id", voiceId);
             payload.put("text", text.trim());
-            payload.put("lang", "zh");
-            payload.put("speed", 1.0);
+            payload.put("lang", StringUtils.defaultIfBlank(model.getConfigJson().getStr("lang"), "zh"));
+            payload.put("speed", indexTtsSpeed(model));
             RemoteResponse response = sendIndexRequest(
                     HttpRequest.newBuilder()
-                            .uri(URI.create(indexTtsBaseUrl(ttsModelId) + "/v1/tts"))
+                            .uri(URI.create(indexTtsBaseUrl(model) + "/v1/tts"))
                             .timeout(Duration.ofSeconds(120))
                             .header("Content-Type", "application/json")
                             .header("Accept", "audio/wav")
@@ -505,6 +506,10 @@ public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> 
     }
 
     private String indexTtsBaseUrl(String ttsModelId) {
+        return indexTtsBaseUrl(indexTtsModel(ttsModelId));
+    }
+
+    private ModelConfigEntity indexTtsModel(String ttsModelId) {
         ModelConfigEntity model = modelConfigService.getModelByIdFromCache(ttsModelId);
         if (model == null || model.getConfigJson() == null) {
             throw new RenException("IndexTTS2.5 模型配置不存在");
@@ -512,6 +517,29 @@ public class TimbreServiceImpl extends BaseServiceImpl<TimbreDao, TimbreEntity> 
         if (!"index_tts_v2_5".equals(model.getConfigJson().getStr("type"))) {
             throw new RenException("当前模型不是 IndexTTS2.5");
         }
+        return model;
+    }
+
+    private double indexTtsSpeed(ModelConfigEntity model) {
+        Object configured = model.getConfigJson().get("speed");
+        if (configured == null || StringUtils.isBlank(configured.toString())) {
+            return 1.0;
+        }
+        final double speed;
+        try {
+            speed = configured instanceof Number
+                    ? ((Number) configured).doubleValue()
+                    : Double.parseDouble(configured.toString().trim());
+        } catch (NumberFormatException exception) {
+            throw new RenException("IndexTTS2.5 语速必须是 0.5 到 2.0 之间的数字");
+        }
+        if (!Double.isFinite(speed) || speed < 0.5 || speed > 2.0) {
+            throw new RenException("IndexTTS2.5 语速必须在 0.5 到 2.0 之间");
+        }
+        return speed;
+    }
+
+    private String indexTtsBaseUrl(ModelConfigEntity model) {
         String url = removeSuffix(model.getConfigJson().getStr("api_url"), "/");
         if (StringUtils.isBlank(url)) {
             throw new RenException("IndexTTS2.5 API 地址未配置");

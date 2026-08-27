@@ -1136,6 +1136,7 @@ export default {
   'modelConfigDialog.normalWav': '普通 WAV',
   'modelConfigDialog.streamingApi': '串流介面',
   'modelConfigDialog.indexStreamingHelp': '建議開啟：邊合成邊向裝置輸出音訊；串流首包前失敗時會安全回退到完整 WAV。',
+  'modelConfigDialog.indexSpeedRange': 'IndexTTS2.5 語速必須在 0.5 到 2.0 之間',
   'modelConfigDialog.available': '可用',
   'modelConfigDialog.unavailable': '不可用',
   'modelConfigDialog.enterJsonExample': '請輸入JSON格式變量(示例:{"key":"value"})',

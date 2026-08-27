@@ -9,6 +9,7 @@
         <div class="index-voice-description">
           音色由 IndexTTS2.5 服务端管理，同步后才能在角色配置中选择。远端
           {{ indexRemoteVoices.length }} 个，本地目录 {{ ttsModels.length }} 个。
+          试听使用已保存的模型语速 {{ indexPreviewSpeed }}。
           <span v-if="indexUnsyncedCount > 0" class="index-warning">
             {{ indexUnsyncedCount }} 个尚未同步
           </span>
@@ -289,6 +290,10 @@ export default {
     indexUnsyncedCount() {
       return this.indexRemoteVoices.filter(voice => !voice.synced).length;
     },
+    indexPreviewSpeed() {
+      const configured = Number(this.modelConfig?.configJson?.speed);
+      return Number.isFinite(configured) ? configured.toFixed(1) : '1.0';
+    },
     filteredTtsModels() {
       return this.ttsModels.filter(model =>
         model.voiceName.toLowerCase().includes(this.searchQuery.toLowerCase())
@@ -436,6 +441,7 @@ export default {
       formData.append('languages', languages);
       formData.append('promptText', promptText || '');
       formData.append('audio', this.indexVoiceFile, this.indexVoiceFile.name);
+      this.stopIndexPreview();
       this.indexRegistering = true;
       Api.timbre.registerIndexVoice(this.ttsModelId, formData, (result) => {
         this.indexRegistering = false;
