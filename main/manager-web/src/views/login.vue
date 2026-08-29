@@ -241,6 +241,10 @@ export default {
     });
   },
   methods: {
+    redirectAfterLogin() {
+      const redirect = this.$route.query.redirect;
+      goToPage(typeof redirect === "string" && redirect.startsWith("/") ? redirect : "/home");
+    },
     openPage(url) {
       const lang = this.$i18n ? this.$i18n.locale : 'zh_CN';
       if (!lang.startsWith('zh')) {
@@ -252,9 +256,7 @@ export default {
       // 处理手动清空localstorage导致无法获取验证码的问题
       const token = localStorage.getItem('token')
       if (token) {
-        if (this.$route.path !== "/home") {
-          this.$router.push("/home");
-        }
+        this.redirectAfterLogin();
       } else {
         this.captchaUuid = getUUID();
 
@@ -308,7 +310,7 @@ export default {
       Api.user.getUserInfo(({ data }) => {
         if (data.code === 0) {
           this.$store.commit("setUserInfo", data.data);
-          goToPage("/home");
+          this.redirectAfterLogin();
         } else {
           showDanger("用户信息获取失败");
         }
