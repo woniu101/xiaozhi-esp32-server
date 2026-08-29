@@ -47,6 +47,33 @@
           ></el-input>
         </el-form-item>
 
+        <div v-if="isAdvertisedEndpoint" class="advertised-endpoint-card">
+          <div class="advertised-endpoint-title">{{ $t('paramDialog.advertisedEndpointTitle') }}</div>
+          <div class="advertised-endpoint-description">
+            {{ $t('paramDialog.advertisedEndpointDescription') }}
+          </div>
+          <el-alert
+            :title="endpointScopeMessage"
+            :type="endpointScopeType"
+            :closable="false"
+            show-icon
+            class="advertised-endpoint-alert"
+          />
+          <div class="advertised-endpoint-actions">
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :loading="endpointTesting"
+              :disabled="!form.paramValue"
+              @click="testCurrentEndpoint"
+            >
+              {{ $t('paramDialog.testFromBrowser') }}
+            </el-button>
+            <span>{{ $t('paramDialog.endpointTestAdvisory') }}</span>
+          </div>
+        </div>
+
         <el-form-item :label="$t('paramDialog.remark')" prop="remark" class="form-item remark-item">
           <el-input type="textarea" v-model="form.remark" :placeholder="$t('paramDialog.remarkPlaceholder')" :rows="3"
             class="custom-textarea"></el-input>
@@ -58,6 +85,11 @@
 
 <script>
 import CustomDialog from './CustomDialog.vue';
+import {
+  endpointScope,
+  isAdvertisedEndpointParam,
+  testAdvertisedEndpoint
+} from '@/utils/advertisedEndpoint.mjs';
 export default {
   props: {
     title: {
@@ -86,6 +118,7 @@ export default {
     return {
       dialogKey: Date.now(),
       saving: false,
+      endpointTesting: false,
       valueTypeOptions: [
         { value: 'string' },
         { value: 'number' },
@@ -105,6 +138,24 @@ export default {
         ]
       }
     };
+  },
+  computed: {
+    isAdvertisedEndpoint() {
+      return isAdvertisedEndpointParam(this.form.paramCode);
+    },
+    advertisedEndpointScope() {
+      return endpointScope(this.form.paramCode, this.form.paramValue);
+    },
+    endpointScopeMessage() {
+      return this.$t(`paramDialog.endpointScope.${this.advertisedEndpointScope}`);
+    },
+    endpointScopeType() {
+      if (this.advertisedEndpointScope === 'invalid' || this.advertisedEndpointScope === 'unspecified') {
+        return 'error';
+      }
+      if (this.advertisedEndpointScope === 'loopback') return 'warning';
+      return 'info';
+    }
   },
   methods: {
     submit() {
@@ -153,6 +204,17 @@ export default {
     // 提供给父组件调用以重置saving状态
     resetSaving() {
       this.saving = false;
+    },
+    async testCurrentEndpoint() {
+      this.endpointTesting = true;
+      try {
+        const count = await testAdvertisedEndpoint(this.form.paramCode, this.form.paramValue);
+        this.$message.success(this.$t('paramDialog.endpointTestSuccess', { count }));
+      } catch (error) {
+        this.$message.error(this.$t('paramDialog.endpointTestFailed'));
+      } finally {
+        this.endpointTesting = false;
+      }
     }
   },
   watch: {
@@ -177,6 +239,7 @@ export default {
       } else {
         // 当对话框关闭时，重置saving状态
         this.saving = false;
+        this.endpointTesting = false;
       }
     }
   }
@@ -295,6 +358,40 @@ export default {
     .remark-item :deep(.el-form-item__label) {
       margin-top: -4px;
     }
+  }
+
+  .advertised-endpoint-card {
+    margin: -4px 0 20px;
+    padding: 14px;
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    background: #f8fbff;
+  }
+
+  .advertised-endpoint-title {
+    color: #334155;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .advertised-endpoint-description {
+    margin-top: 6px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .advertised-endpoint-alert {
+    margin-top: 10px;
+  }
+
+  .advertised-endpoint-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    color: #94a3b8;
+    font-size: 12px;
   }
 }
 </style>

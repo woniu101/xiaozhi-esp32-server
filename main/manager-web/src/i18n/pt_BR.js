@@ -349,6 +349,18 @@ export default {
   'paramDialog.booleanType': 'Booleano',
   'paramDialog.arrayType': 'Array',
   'paramDialog.jsonType': 'Objeto JSON',
+  'paramDialog.advertisedEndpointTitle': 'Endereço de acesso do cliente',
+  'paramDialog.advertisedEndpointDescription': 'Este endereço é enviado aos dispositivos ou clientes; não é o endereço de escuta do serviço de administração. Ao salvar, apenas a sintaxe é validada.',
+  'paramDialog.testFromBrowser': 'Testar deste navegador',
+  'paramDialog.endpointTestAdvisory': 'O teste serve apenas para diagnóstico e não impede salvar.',
+  'paramDialog.endpointTestSuccess': 'Este navegador acessou {count} endereço(s)',
+  'paramDialog.endpointTestFailed': 'Este navegador não conseguiu conectar. Verifique a escuta do túnel, firewall, CORS/conteúdo misto e o estado do serviço.',
+  'paramDialog.endpointScope.empty': 'Informe o endereço de acesso que será enviado aos clientes.',
+  'paramDialog.endpointScope.invalid': 'O endereço não pôde ser interpretado. Verifique protocolo, host, porta e caminho.',
+  'paramDialog.endpointScope.unspecified': '0.0.0.0 e [::] são endereços de escuta e não podem ser destinos de clientes.',
+  'paramDialog.endpointScope.loopback': 'Um endereço de loopback funciona apenas na máquina do cliente. Para compartilhar na LAN, use o IP local do computador gateway.',
+  'paramDialog.endpointScope.lan': 'Este é um endereço de LAN. Garanta que o encaminhamento escute na interface LAN e que o firewall permita acesso de entrada.',
+  'paramDialog.endpointScope.public': 'Este é um endereço público ou resolvível. Confirme que todos os clientes conseguem acessá-lo.',
 
   // Replacement word management page related
   'replacementWordManagement.pageTitle': 'Gerenciamento de Palavras de Substituição',

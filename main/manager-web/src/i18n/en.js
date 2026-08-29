@@ -349,6 +349,18 @@ export default {
   'paramDialog.booleanType': 'Boolean',
   'paramDialog.arrayType': 'Array',
   'paramDialog.jsonType': 'JSON Object',
+  'paramDialog.advertisedEndpointTitle': 'Client access endpoint',
+  'paramDialog.advertisedEndpointDescription': 'This address is sent to devices or clients; it is not the manager service listen address. Saving validates syntax only.',
+  'paramDialog.testFromBrowser': 'Test from this browser',
+  'paramDialog.endpointTestAdvisory': 'The test is diagnostic only and does not block saving.',
+  'paramDialog.endpointTestSuccess': 'This browser reached {count} endpoint(s)',
+  'paramDialog.endpointTestFailed': 'This browser could not connect. Check the tunnel bind address, firewall, CORS or mixed-content restrictions, and service status.',
+  'paramDialog.endpointScope.empty': 'Enter the access endpoint that clients should receive.',
+  'paramDialog.endpointScope.invalid': 'The endpoint cannot be parsed. Check its scheme, host, port, and path.',
+  'paramDialog.endpointScope.unspecified': '0.0.0.0 and [::] are listen addresses and cannot be used as client destinations.',
+  'paramDialog.endpointScope.loopback': 'A loopback address works only on the machine running the client. For LAN sharing, use the gateway computer’s LAN IP.',
+  'paramDialog.endpointScope.lan': 'This is a LAN endpoint. Ensure the forwarding service listens on the LAN interface and the firewall allows inbound access.',
+  'paramDialog.endpointScope.public': 'This is a public or resolvable hostname. Ensure every target client can reach it.',
 
   // Replacement word management page related
   'replacementWordManagement.pageTitle': 'Replacement Word Management',

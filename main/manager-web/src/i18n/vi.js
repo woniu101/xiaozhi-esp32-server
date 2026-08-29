@@ -349,6 +349,18 @@ export default {
   'paramDialog.booleanType': 'Boolean',
   'paramDialog.arrayType': 'Mảng',
   'paramDialog.jsonType': 'Đối tượng JSON',
+  'paramDialog.advertisedEndpointTitle': 'Địa chỉ truy cập của máy khách',
+  'paramDialog.advertisedEndpointDescription': 'Địa chỉ này được gửi cho thiết bị hoặc máy khách, không phải địa chỉ lắng nghe của dịch vụ quản lý. Khi lưu chỉ kiểm tra cú pháp.',
+  'paramDialog.testFromBrowser': 'Kiểm tra từ trình duyệt này',
+  'paramDialog.endpointTestAdvisory': 'Kết quả chỉ dùng để chẩn đoán và không chặn việc lưu.',
+  'paramDialog.endpointTestSuccess': 'Trình duyệt này đã truy cập thành công {count} địa chỉ',
+  'paramDialog.endpointTestFailed': 'Trình duyệt này không thể kết nối. Hãy kiểm tra địa chỉ lắng nghe của đường hầm, tường lửa, giới hạn CORS/nội dung hỗn hợp và trạng thái dịch vụ.',
+  'paramDialog.endpointScope.empty': 'Nhập địa chỉ truy cập sẽ gửi cho máy khách.',
+  'paramDialog.endpointScope.invalid': 'Không thể phân tích địa chỉ. Hãy kiểm tra giao thức, máy chủ, cổng và đường dẫn.',
+  'paramDialog.endpointScope.unspecified': '0.0.0.0 và [::] chỉ là địa chỉ lắng nghe, không thể dùng làm đích cho máy khách.',
+  'paramDialog.endpointScope.loopback': 'Địa chỉ loopback chỉ hoạt động trên máy đang chạy máy khách. Để chia sẻ trong LAN, hãy dùng IP LAN của máy gateway.',
+  'paramDialog.endpointScope.lan': 'Đây là địa chỉ LAN. Hãy bảo đảm dịch vụ chuyển tiếp lắng nghe trên giao diện LAN và tường lửa cho phép truy cập vào.',
+  'paramDialog.endpointScope.public': 'Đây là địa chỉ công khai hoặc tên miền phân giải được. Hãy bảo đảm mọi máy khách đều truy cập được.',
 
   // Replacement word management page related
   'replacementWordManagement.pageTitle': 'Quản lý từ thay thế',

@@ -36,7 +36,7 @@ import xiaozhi.common.validator.group.UpdateGroup;
 import xiaozhi.modules.config.service.ConfigService;
 import xiaozhi.modules.sys.dto.SysParamsDTO;
 import xiaozhi.modules.sys.service.SysParamsService;
-import xiaozhi.modules.sys.utils.WebSocketValidator;
+import xiaozhi.modules.sys.utils.AdvertisedEndpointValidator;
 
 /**
  * 参数管理
@@ -134,27 +134,11 @@ public class SysParamsController {
         if (!paramCode.equals(Constant.SERVER_WEBSOCKET)) {
             return;
         }
-        String[] wsUrls = urls.split("\\;");
-        if (wsUrls.length == 0) {
+        if (StringUtils.isBlank(urls)) {
             throw new RenException(ErrorCode.WEBSOCKET_URLS_EMPTY);
         }
-        for (String url : wsUrls) {
-            if (StringUtils.isNotBlank(url)) {
-                // 检查是否包含localhost或127.0.0.1
-                if (url.contains("localhost") || url.contains("127.0.0.1")) {
-                    throw new RenException(ErrorCode.WEBSOCKET_URL_LOCALHOST);
-                }
-
-                // 验证WebSocket地址格式
-                if (!WebSocketValidator.validateUrlFormat(url)) {
-                    throw new RenException(ErrorCode.WEBSOCKET_URL_FORMAT_ERROR);
-                }
-
-                // 测试WebSocket连接
-                if (!WebSocketValidator.testConnection(url)) {
-                    throw new RenException(ErrorCode.WEBSOCKET_CONNECTION_FAILED);
-                }
-            }
+        if (!AdvertisedEndpointValidator.isValidWebSocketList(urls)) {
+            throw new RenException(ErrorCode.WEBSOCKET_URL_FORMAT_ERROR);
         }
     }
 
@@ -182,32 +166,8 @@ public class SysParamsController {
             return;
         }
 
-        // 检查是否包含localhost或127.0.0.1
-        if (url.contains("localhost") || url.contains("127.0.0.1")) {
-            throw new RenException(ErrorCode.OTA_URL_LOCALHOST);
-        }
-
-        // 验证URL格式
-        if (!url.toLowerCase().startsWith("http")) {
-            throw new RenException(ErrorCode.OTA_URL_PROTOCOL_ERROR);
-        }
-        if (!url.endsWith("/ota/")) {
+        if (!AdvertisedEndpointValidator.isValidOtaUrl(url)) {
             throw new RenException(ErrorCode.OTA_URL_FORMAT_ERROR);
-        }
-
-        try {
-            // 发送GET请求
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            if (response.getStatusCode() != HttpStatus.OK) {
-                throw new RenException(ErrorCode.OTA_INTERFACE_ACCESS_FAILED);
-            }
-            // 检查响应内容是否包含OTA相关信息
-            String body = response.getBody();
-            if (body == null || !body.contains("OTA")) {
-                throw new RenException(ErrorCode.OTA_INTERFACE_FORMAT_ERROR);
-            }
-        } catch (Exception e) {
-            throw new RenException(ErrorCode.OTA_INTERFACE_VALIDATION_FAILED);
         }
     }
 

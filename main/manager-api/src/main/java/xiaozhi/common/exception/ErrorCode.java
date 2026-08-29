@@ -131,12 +131,12 @@ public interface ErrorCode {
     // 参数验证相关错误码
     int WEBSOCKET_URLS_EMPTY = 10098; // WebSocket地址列表不能为空
     int WEBSOCKET_URL_LOCALHOST = 10099; // WebSocket地址不能使用localhost或127.0.0.1
-    int WEBSOCKET_URL_FORMAT_ERROR = 10100; // WebSocket地址格式不正确
+    int WEBSOCKET_URL_FORMAT_ERROR = 10100; // WebSocket客户端访问地址格式不正确
     int WEBSOCKET_CONNECTION_FAILED = 10101; // WebSocket连接测试失败
     int OTA_URL_EMPTY = 10102; // OTA地址不能为空
     int OTA_URL_LOCALHOST = 10103; // OTA地址不能使用localhost或127.0.0.1
     int OTA_URL_PROTOCOL_ERROR = 10104; // OTA地址必须以http或https开头
-    int OTA_URL_FORMAT_ERROR = 10105; // OTA地址必须以/ota/结尾
+    int OTA_URL_FORMAT_ERROR = 10105; // OTA客户端访问地址格式不正确
     int OTA_INTERFACE_ACCESS_FAILED = 10106; // OTA接口访问失败
     int OTA_INTERFACE_FORMAT_ERROR = 10107; // OTA接口返回内容格式不正确
     int OTA_INTERFACE_VALIDATION_FAILED = 10108; // OTA接口验证失败

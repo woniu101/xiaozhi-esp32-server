@@ -349,6 +349,18 @@ export default {
   'paramDialog.booleanType': '布尔值(boolean)',
   'paramDialog.arrayType': '数组(array)',
   'paramDialog.jsonType': 'JSON对象(json)',
+  'paramDialog.advertisedEndpointTitle': '客户端访问地址',
+  'paramDialog.advertisedEndpointDescription': '该地址会下发给设备或客户端，并不是管理服务自身的监听地址。保存时只校验格式。',
+  'paramDialog.testFromBrowser': '从当前浏览器测试',
+  'paramDialog.endpointTestAdvisory': '测试结果仅供诊断，不影响保存。',
+  'paramDialog.endpointTestSuccess': '当前浏览器已成功访问 {count} 个地址',
+  'paramDialog.endpointTestFailed': '当前浏览器无法访问。请检查隧道监听地址、防火墙、CORS/混合内容限制和服务状态。',
+  'paramDialog.endpointScope.empty': '请输入要下发给客户端的访问地址。',
+  'paramDialog.endpointScope.invalid': '地址无法解析，请检查协议、主机、端口和路径。',
+  'paramDialog.endpointScope.unspecified': '0.0.0.0 或 [::] 只能用于监听，客户端不能把它作为目标地址。',
+  'paramDialog.endpointScope.loopback': '回环地址只对运行客户端的当前机器有效；局域网共享请填写转发电脑的局域网 IP。',
+  'paramDialog.endpointScope.lan': '这是局域网地址。请确保转发服务监听局域网接口，并允许防火墙入站访问。',
+  'paramDialog.endpointScope.public': '这是公网或可解析域名地址，请确认所有目标客户端均可访问。',
 
   // 替换词对话框相关
   'replacementWordManagement.pageTitle': '替换词管理',

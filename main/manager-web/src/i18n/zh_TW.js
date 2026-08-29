@@ -349,6 +349,18 @@ export default {
   'paramDialog.booleanType': '布林值(boolean)',
   'paramDialog.arrayType': '陣列(array)',
   'paramDialog.jsonType': 'JSON物件(json)',
+  'paramDialog.advertisedEndpointTitle': '客戶端存取位址',
+  'paramDialog.advertisedEndpointDescription': '此位址會下發給裝置或客戶端，並非管理服務自身的監聽位址。儲存時只驗證格式。',
+  'paramDialog.testFromBrowser': '從目前瀏覽器測試',
+  'paramDialog.endpointTestAdvisory': '測試結果僅供診斷，不影響儲存。',
+  'paramDialog.endpointTestSuccess': '目前瀏覽器已成功存取 {count} 個位址',
+  'paramDialog.endpointTestFailed': '目前瀏覽器無法存取。請檢查隧道監聽位址、防火牆、CORS／混合內容限制和服務狀態。',
+  'paramDialog.endpointScope.empty': '請輸入要下發給客戶端的存取位址。',
+  'paramDialog.endpointScope.invalid': '無法解析位址，請檢查協定、主機、連接埠和路徑。',
+  'paramDialog.endpointScope.unspecified': '0.0.0.0 或 [::] 只能用於監聽，客戶端不能將其作為目標位址。',
+  'paramDialog.endpointScope.loopback': '回環位址只對執行客戶端的目前機器有效；區域網路共用請填寫轉發電腦的區域網路 IP。',
+  'paramDialog.endpointScope.lan': '這是區域網路位址。請確保轉發服務監聽區域網路介面，並允許防火牆入站存取。',
+  'paramDialog.endpointScope.public': '這是公網或可解析網域位址，請確認所有目標客戶端均可存取。',
 
   // 替換詞管理頁面相關
   'replacementWordManagement.pageTitle': '替換詞管理',

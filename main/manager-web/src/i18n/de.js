@@ -349,6 +349,18 @@ export default {
   'paramDialog.booleanType': 'Boolesch',
   'paramDialog.arrayType': 'Array',
   'paramDialog.jsonType': 'JSON-Objekt',
+  'paramDialog.advertisedEndpointTitle': 'Client-Zugriffsadresse',
+  'paramDialog.advertisedEndpointDescription': 'Diese Adresse wird an Geräte oder Clients gesendet und ist nicht die Listen-Adresse des Verwaltungsdienstes. Beim Speichern wird nur das Format geprüft.',
+  'paramDialog.testFromBrowser': 'Von diesem Browser testen',
+  'paramDialog.endpointTestAdvisory': 'Der Test dient nur der Diagnose und verhindert das Speichern nicht.',
+  'paramDialog.endpointTestSuccess': 'Dieser Browser hat {count} Adresse(n) erreicht',
+  'paramDialog.endpointTestFailed': 'Dieser Browser konnte keine Verbindung herstellen. Prüfen Sie Tunnel-Bindung, Firewall, CORS/Mixed Content und Dienststatus.',
+  'paramDialog.endpointScope.empty': 'Geben Sie die an Clients zu sendende Zugriffsadresse ein.',
+  'paramDialog.endpointScope.invalid': 'Die Adresse kann nicht gelesen werden. Prüfen Sie Protokoll, Host, Port und Pfad.',
+  'paramDialog.endpointScope.unspecified': '0.0.0.0 und [::] sind Listen-Adressen und können nicht als Client-Ziel verwendet werden.',
+  'paramDialog.endpointScope.loopback': 'Eine Loopback-Adresse gilt nur auf dem Client-Rechner. Verwenden Sie für LAN-Freigabe die LAN-IP des Gateway-Rechners.',
+  'paramDialog.endpointScope.lan': 'Dies ist eine LAN-Adresse. Der Weiterleitungsdienst muss am LAN-Interface lauschen und die Firewall eingehenden Zugriff erlauben.',
+  'paramDialog.endpointScope.public': 'Dies ist eine öffentliche oder auflösbare Adresse. Alle Ziel-Clients müssen sie erreichen können.',
 
   // Replacement word management page related
   'replacementWordManagement.pageTitle': 'Ersetzungswortverwaltung',
