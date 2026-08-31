@@ -82,8 +82,15 @@ def setup_logging(config=None):
         log_dir = log_config.get("log_dir", "tmp")
         log_file = log_config.get("log_file", "server.log")
         data_dir = log_config.get("data_dir", "data")
+        console_only = os.getenv("XIAOZHI_CONSOLE_LOG_ONLY", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
 
-        os.makedirs(log_dir, exist_ok=True)
+        if not console_only:
+            os.makedirs(log_dir, exist_ok=True)
         os.makedirs(data_dir, exist_ok=True)
 
         # 配置日志输出
@@ -92,24 +99,22 @@ def setup_logging(config=None):
         # 输出到控制台
         logger.add(sys.stdout, format=log_format, level=log_level, filter=formatter)
 
-        # 输出到文件 - 统一目录，按大小轮转
-        # 日志文件完整路径
-        log_file_path = os.path.join(log_dir, log_file)
-
-        # 添加日志处理器
-        logger.add(
-            log_file_path,
-            format=log_format_file,
-            level=log_level,
-            filter=formatter,
-            rotation="10 MB",  # 每个文件最大10MB
-            retention="30 days",  # 保留30天
-            compression=None,
-            encoding="utf-8",
-            enqueue=True,  # 异步安全
-            backtrace=True,
-            diagnose=True,
-        )
+        if not console_only:
+            # 非 Supervisor 部署仍保留原有文件日志能力。
+            log_file_path = os.path.join(log_dir, log_file)
+            logger.add(
+                log_file_path,
+                format=log_format_file,
+                level=log_level,
+                filter=formatter,
+                rotation="10 MB",
+                retention="30 days",
+                compression=None,
+                encoding="utf-8",
+                enqueue=True,
+                backtrace=True,
+                diagnose=True,
+            )
         _logger_initialized = True  # 标记为已初始化
 
     return logger
