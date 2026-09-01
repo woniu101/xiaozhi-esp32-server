@@ -1,7 +1,9 @@
 import os
 import asyncio
+import re
 import yaml
 from collections.abc import Mapping
+from pathlib import Path
 from config.manage_api_client import (
     init_service,
     get_server_config,
@@ -33,7 +35,9 @@ async def load_config():
         return cached_config
 
     default_config_path = get_project_dir() + "config.yaml"
-    custom_config_path = get_project_dir() + "data/.config.yaml"
+    custom_config_path = os.environ.get(
+        "XIAOZHI_CONFIG_PATH", get_project_dir() + "data/.config.yaml"
+    )
 
     # 加载默认配置
     default_config = read_config(default_config_path)
@@ -44,11 +48,30 @@ async def load_config():
     else:
         # 合并配置
         config = merge_configs(default_config, custom_config)
+    apply_runtime_output_dirs(config)
     # 初始化目录
     ensure_directories(config)
 
     # 缓存配置
     cache_manager.set(CacheType.CONFIG, "main_config", config)
+    return config
+
+
+def apply_runtime_output_dirs(config):
+    """Move generated ASR/TTS files to an instance-scoped data-disk directory."""
+    configured = os.environ.get("XIAOZHI_OUTPUT_DIR", "").strip()
+    if not configured:
+        return config
+    output_root = Path(configured).expanduser().resolve()
+    for module_name in ("ASR", "TTS"):
+        providers = config.get(module_name)
+        if not isinstance(providers, Mapping):
+            continue
+        for provider_name, provider in providers.items():
+            if not isinstance(provider, dict) or not provider.get("output_dir"):
+                continue
+            safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(provider_name)).strip("-.")
+            provider["output_dir"] = str(output_root / module_name.lower() / (safe_name or "default"))
     return config
 
 
@@ -117,6 +140,8 @@ async def get_private_config_from_api(config, device_id, client_id):
     private_config = agent_result if not isinstance(agent_result, Exception) else {}
     if correct_words:
         private_config["correct_words"] = correct_words
+    apply_runtime_output_dirs(private_config)
+    ensure_directories(private_config)
     return private_config
 
 
