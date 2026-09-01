@@ -18,7 +18,6 @@ from core.utils.util import (
     extract_json_from_string,
     check_vad_update,
     check_asr_update,
-    filter_sensitive_info,
 )
 from typing import Dict, Any
 from collections import deque
@@ -284,7 +283,7 @@ class ConnectionHandler:
         """保存记忆并关闭连接"""
         try:
             # 守护线程1：独立生成标题（不依赖记忆模型）
-            if self.session_id:
+            if self.session_id and self.chat_history_conf != 0:
                 def generate_title_task():
                     try:
                         loop = asyncio.new_event_loop()
@@ -814,8 +813,13 @@ class ConnectionHandler:
             )
             private_config["delete_audio"] = bool(self.config.get("delete_audio", True))
             private_config["tts_timeout"] = self.config.get("tts_timeout", 15)
+            selected_modules = private_config.get("selected_module", {})
+            character_style = private_config.get("character_style") or {}
             self.logger.bind(tag=TAG).info(
-                f"{time.time() - begin_time} 秒，异步获取差异化配置成功: {json.dumps(filter_sensitive_info(private_config), ensure_ascii=False)}"
+                f"{time.time() - begin_time:.3f} 秒，异步获取差异化配置成功: "
+                f"selected_modules={json.dumps(selected_modules, ensure_ascii=False, sort_keys=True)}, "
+                f"chat_history_conf={private_config.get('chat_history_conf', 0)}, "
+                f"character_style_loaded={bool(character_style.get('resolved_prompt'))}"
             )
             self.need_bind = False
             self.bind_completed_event.set()
